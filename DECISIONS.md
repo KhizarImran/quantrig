@@ -35,7 +35,7 @@ customer credentials. Retrofitting this means rewriting the runner.
 Everything is a client of the HTTP/WS API — web UI, MCP server, future TUI.
 Nothing touches SQLite or the engine directly.
 
-Bind to `127.0.0.1`, password-gate, envelope-encrypt keys at rest.
+bind to `127.0.0.1`, password-gate, envelope-encrypt keys at rest.
 
 ## Stack
 

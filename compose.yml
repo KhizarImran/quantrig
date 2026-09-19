@@ -1,0 +1,9 @@
+services:
+  quantrig:
+    build: .
+    # Loopback only — DECISIONS.md: password-gate before this leaves localhost.
+    ports: ["127.0.0.1:9000:9000"]
+    volumes:
+      - ./data:/data
+      - ./candles:/candles:ro
+    restart: unless-stopped
