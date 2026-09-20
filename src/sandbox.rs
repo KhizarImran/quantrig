@@ -37,11 +37,18 @@ pub fn run_backtest(
     cmd.args(["--unshare-all", "--die-with-parent", "--clearenv"])
         .args(["--setenv", "PATH", "/usr/bin"])
         .args(["--setenv", "HOME", "/tmp"])
+        // /etc is deliberately not bound, so there is no ld.so.cache to consult.
+        // Debian's python keeps libpython in <prefix>/lib, which is not a default
+        // linker path — point the linker straight at it instead of exposing /etc.
+        .args(["--setenv", "LD_LIBRARY_PATH", &format!("{prefix}/lib:{prefix}/lib64")])
         .args(["--ro-bind", "/usr", "/usr"])
         .args(["--symlink", "usr/lib", "/lib"])
         .args(["--symlink", "usr/lib64", "/lib64"])
         .args(["--symlink", "usr/bin", "/bin"])
-        .args(["--proc", "/proc"])
+        // No --proc: mounting a fresh procfs inside a userns needs a fully
+        // visible /proc, which Docker masks. Nothing in the backtest path reads
+        // /proc, so not mounting it keeps the container's defaults intact and
+        // makes the sandbox tighter rather than looser.
         .args(["--dev", "/dev"])
         .args(["--tmpfs", "/tmp"]);
     if prefix != "/usr" {
@@ -58,11 +65,16 @@ pub fn run_backtest(
         .output()?;
 
     if !out_proc.status.success() {
-        return Err(format!(
-            "strategy failed: {}",
-            String::from_utf8_lossy(&out_proc.stderr)
-        )
-        .into());
+        let stderr = String::from_utf8_lossy(&out_proc.stderr);
+        // Distinguish "the sandbox could not start" from "the strategy is wrong";
+        // they look identical in the UI otherwise, and the fix is completely different.
+        if stderr.contains("create new namespace") {
+            return Err("the sandbox could not start: bubblewrap needs user namespaces. \
+                        In Docker, add `security_opt: [seccomp=unconfined]` to the \
+                        service (see compose.yml) and recreate the container."
+                .into());
+        }
+        return Err(format!("strategy failed: {stderr}").into());
     }
     Ok(String::from_utf8(out_proc.stdout)?)
 }
@@ -143,6 +155,19 @@ pd.DataFrame({"open": close, "high": close + 0.0005, "low": close - 0.0005,
             "class X(Strategy):\n",
             "    def next(self): pass\n",
         )).unwrap();
+    }
+
+    /// The linker has no ld.so.cache in here, so the prefix must arrive by env.
+    #[test]
+    fn sandbox_points_the_linker_at_the_python_prefix() {
+        let dir = workdir();
+        run(&dir, "libs.py", &format!(concat!(
+            "import os\n",
+            "assert os.environ['LD_LIBRARY_PATH'] == '{0}/lib:{0}/lib64', os.environ.get('LD_LIBRARY_PATH')\n",
+            "from backtestingfx import Strategy\n",
+            "class X(Strategy):\n",
+            "    def next(self): pass\n",
+        ), python_prefix())).unwrap();
     }
 
     #[test]
