@@ -1,0 +1,11 @@
+# Dev overlay: `docker compose -f compose.yml -f compose.dev.yml up -d`
+#
+# The UI and the two Python scripts are read from disk at request time, so
+# mounting them means `npm run build` on the host is live immediately — no
+# image rebuild. Only a change to src/*.rs needs one.
+services:
+  quantrig:
+    volumes:
+      - ./ui/dist:/app/ui/dist:ro
+      - ./runner:/app/runner:ro
+      - ./fetcher:/app/fetcher:ro

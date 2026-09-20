@@ -3,3 +3,7 @@ __pycache__/
 .env
 *.parquet
 *.db
+.venv/
+data/
+node_modules/
+ui/dist/

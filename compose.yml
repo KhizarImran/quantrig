@@ -1,0 +1,18 @@
+services:
+  quantrig:
+    build: .
+    # Loopback only — DECISIONS.md: password-gate before this leaves localhost.
+    ports: ["127.0.0.1:9000:9000"]
+    volumes:
+      - ./data:/data
+    # bubblewrap builds the strategy sandbox out of a user namespace, and Docker's
+    # default seccomp profile blocks clone(CLONE_NEWUSER). Without this the inner
+    # sandbox cannot start at all.
+    #
+    # The trade: it loosens the container's syscall filter to enable the boundary
+    # that actually matters here — the one keeping LLM-written strategy code away
+    # from the API key and the network. A narrower custom seccomp profile that
+    # permits only CLONE_NEWUSER would be strictly better; this is the blunt version.
+    security_opt:
+      - seccomp=unconfined
+    restart: unless-stopped
