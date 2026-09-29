@@ -13,7 +13,7 @@ fn root() -> std::path::PathBuf {
 }
 
 fn run(args: &[&str]) -> Result<String, Box<dyn Error>> {
-    let key = store::api_key().ok_or("no London Strategic Edge API key set — add one in Settings")?;
+    let key = store::lse_key().ok_or("no London Strategic Edge API key set — add one in Settings")?;
     let python = format!("{}/bin/python3", crate::sandbox::python_prefix());
     let out = Command::new(python)
         .arg(root().join("fetcher/fetch.py"))

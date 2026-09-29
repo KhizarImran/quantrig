@@ -23,12 +23,71 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 
 const body = (v: unknown) => ({ method: "POST", body: JSON.stringify(v) });
 
+export type KeyName = "lse_api_key" | "opencode_api_key";
+export type SettingsState = Record<`${KeyName}_set`, boolean>;
+
+/** One chat turn's messages, in OpenAI shape: assistant text, tool calls, tool results. */
+export type ToolCall = { id: string; function: { name: string; arguments: string } };
+export type Message = {
+  role: "user" | "assistant" | "tool";
+  content?: string | null;
+  name?: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+};
+
+export type ChatEvent =
+  | { type: "text"; delta: string }
+  | { type: "reasoning"; delta: string }
+  | { type: "message"; message: Message }
+  | { type: "tool"; id: string; name: string; arguments: string }
+  | { type: "tool_result"; message: Message }
+  | { type: "done" }
+  | { type: "error"; error: string };
+
 export const api = {
-  settings: () => call<{ lse_api_key_set: boolean }>("/api/settings"),
-  saveKey: (lse_api_key: string) =>
-    call<{ lse_api_key_set: boolean }>("/api/settings", {
+  settings: () => call<SettingsState>("/api/settings"),
+  saveKey: (which: KeyName, value: string) =>
+    call<SettingsState>("/api/settings", {
       method: "PUT",
-      body: JSON.stringify({ lse_api_key }),
+      body: JSON.stringify({ [which]: value }),
+    }),
+  models: () =>
+    call<{ data: { id: string }[] }>("/api/models").then((r) =>
+      r.data.map((m) => m.id).sort(),
+    ),
+  /** Streams one turn. Yields events until `done` or `error`. */
+  chat: async function* (model: string, session: string, messages: Message[]) {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, session, messages }),
+    });
+    if (!res.ok || !res.body) throw new Error((await res.json()).error ?? res.statusText);
+
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += value;
+      // SSE frames are separated by a blank line; a frame can span reads.
+      let split: number;
+      while ((split = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("data:")) yield JSON.parse(line.slice(5)) as ChatEvent;
+        }
+      }
+    }
+  },
+  strategies: () => call<string[]>("/api/strategies"),
+  strategy: (name: string) => call<{ name: string; code: string }>(`/api/strategies/${name}`),
+  saveStrategy: (name: string, code: string) =>
+    call<{ name: string }>("/api/strategies", {
+      method: "PUT",
+      body: JSON.stringify({ name, code }),
     }),
   pairs: () => call<Pair[]>("/api/pairs"),
   datasets: () => call<Dataset[]>("/api/datasets"),
