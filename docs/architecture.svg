@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="940" viewBox="0 0 1240 940" role="img" aria-labelledby="title">
+<title id="title">quantrig architecture: browser, API, fetcher, bubblewrap sandbox and data volume</title>
+<!-- Generated to match docs/architecture.excalidraw. Edit the .excalidraw file and re-export; see README "Editing the diagram". -->
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1e1e1e"/></marker></defs>
+<rect x="0" y="0" width="1240" height="940" fill="#ffffff"/>
+<rect x="40" y="70" width="300" height="84" rx="10" fill="#e9ecef" stroke="#495057" stroke-width="2"/>
+<rect x="400" y="70" width="440" height="84" rx="10" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<rect x="900" y="70" width="300" height="84" rx="10" fill="#e9ecef" stroke="#495057" stroke-width="2"/>
+<rect x="40" y="200" width="1160" height="600" rx="10" fill="none" stroke="#495057" stroke-width="2" stroke-dasharray="10 8"/>
+<rect x="400" y="250" width="440" height="175" rx="10" fill="#a5d8ff" stroke="#1971c2" stroke-width="2"/>
+<rect x="80" y="480" width="300" height="150" rx="10" fill="#ffec99" stroke="#f08c00" stroke-width="2"/>
+<rect x="860" y="480" width="300" height="150" rx="10" fill="#ffc9c9" stroke="#e03131" stroke-width="2"/>
+<rect x="400" y="650" width="440" height="100" rx="10" fill="#d0bfff" stroke="#6741d9" stroke-width="2"/>
+<rect x="40" y="858" width="22" height="18" rx="4" fill="#ffec99" stroke="#f08c00" stroke-width="2"/>
+<rect x="620" y="858" width="22" height="18" rx="4" fill="#ffc9c9" stroke="#e03131" stroke-width="2"/>
+<rect x="40" y="888" width="22" height="18" rx="4" fill="#a5d8ff" stroke="#1971c2" stroke-width="2"/>
+<rect x="620" y="888" width="22" height="18" rx="4" fill="#d0bfff" stroke="#6741d9" stroke-width="2"/>
+<polyline points="620,154 620,250" fill="none" stroke="#1e1e1e" stroke-width="2" marker-start="url(#head)" marker-end="url(#head)"/>
+<polyline points="400,400 300,480" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#head)"/>
+<polyline points="190,480 190,154" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#head)"/>
+<polyline points="840,290 1000,154" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#head)"/>
+<polyline points="840,400 940,480" fill="none" stroke="#1e1e1e" stroke-width="2" marker-start="url(#head)" marker-end="url(#head)"/>
+<polyline points="380,600 400,680" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#head)"/>
+<polyline points="860,600 840,680" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#head)"/>
+<polyline points="620,425 620,650" fill="none" stroke="#1e1e1e" stroke-width="2" marker-start="url(#head)" marker-end="url(#head)"/>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#1e1e1e" font-weight="700"><tspan x="40" y="46.4">quantrig — architecture</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="56" y="99.2">London Strategic Edge</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="56" y="127.0">market data API — your LSE key</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="416" y="99.2">Browser — React UI</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="416" y="127.0">Chat · Backtest · Data · Settings</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="916" y="99.2">OpenCode Go</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="916" y="127.0">LLM gateway — your OpenCode key</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#495057"><tspan x="56" y="783.2">Docker container  ·  compose.yml  ·  published on 127.0.0.1:9000 only  ·  seccomp=unconfined so bubblewrap can create user namespaces</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="416" y="279.2">quantrig API — Rust · axum</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="416" y="306.9">/api/settings  /api/pairs  /api/datasets</tspan><tspan x="416" y="324.4">/api/run  /api/strategies  /api/conversations</tspan><tspan x="416" y="341.9">/api/chat (SSE)  /api/models  /report/{id}</tspan><tspan x="416" y="359.4"></tspan><tspan x="416" y="376.9">holds both keys · runs the chat agent's tool loop</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="96" y="509.2">Fetcher — fetch.py</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="96" y="537.0">our code, not the agent's</tspan><tspan x="96" y="554.5">LSE_API_KEY in its environment</tspan><tspan x="96" y="572.0">network: allowed</tspan><tspan x="96" y="589.5">never sees strategy code</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="876" y="509.2">Sandbox — bubblewrap</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="876" y="537.0">run.py + strategy.py (LLM-written)</tspan><tspan x="876" y="554.5">network: none (--unshare-all)</tspan><tspan x="876" y="572.0">environment cleared — no keys</tspan><tspan x="876" y="589.5">read-only /q · writable /out only</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#1e1e1e" font-weight="700"><tspan x="416" y="679.2">./data  →  /data  (volume)</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="416" y="707.0">settings.json (0600) · candles/*.parquet · pairs.json</tspan><tspan x="416" y="724.5">strategies/*.py · runs/&lt;id&gt;/ · conversations/*.json</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="632" y="182.4">HTTP JSON + SSE</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="362" y="462.4">spawns, key via env</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="200" y="340.4">HTTPS</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="936" y="250.4">HTTPS, Bearer key</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="878" y="450.4">bwrap spawn → stats JSON</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="262" y="660.4">writes parquet</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="860" y="660.4">ro-binds strategy + candles</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="860" y="678.4">writes report to runs/&lt;id&gt;</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#495057"><tspan x="632" y="540.4">reads &amp; writes</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1e1e1e" font-weight="700"><tspan x="40" y="842.8">Trust boundary</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="72" y="870.2">holds a credential, may use the network</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="652" y="870.2">runs LLM-written code — no network, no secrets</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="72" y="900.2">the only thing clients talk to</tspan></text>
+<text xml:space="preserve" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#1e1e1e"><tspan x="652" y="900.2">state on disk, never bound into the sandbox except the files a run needs</tspan></text>
+</svg>
