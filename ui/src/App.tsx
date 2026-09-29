@@ -45,10 +45,11 @@ export default function App() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <TabsContent value="chat" className="h-full">
+        {/* keepMounted: a chat streaming or a strategy half-edited survives a tab switch. */}
+        <TabsContent value="chat" className="h-full" keepMounted>
           <Chat onChanged={reload} />
         </TabsContent>
-        <TabsContent value="backtest" className="h-full">
+        <TabsContent value="backtest" className="h-full" keepMounted>
           <Backtest datasets={datasets} onNeedData={() => setScreen("data")} version={version} />
         </TabsContent>
         <TabsContent value="data">

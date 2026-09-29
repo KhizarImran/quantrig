@@ -6,7 +6,7 @@ mod fetcher;
 mod sandbox;
 mod store;
 
-use axum::extract::Path as UrlPath;
+use axum::extract::{DefaultBodyLimit, Path as UrlPath};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::Html;
@@ -218,6 +218,37 @@ async fn put_strategy(Json(req): Json<StrategyRequest>) -> Result<Json<Value>, A
     Ok(Json(json!({ "name": req.name })))
 }
 
+// ---- conversations ----
+
+async fn list_conversations() -> Json<Value> {
+    Json(json!(store::list_conversations()))
+}
+
+async fn get_conversation(UrlPath(id): UrlPath<String>) -> Result<Json<Value>, ApiError> {
+    if store::conversation_path(&id).is_none() {
+        return Err(bad(StatusCode::BAD_REQUEST, "bad conversation id"));
+    }
+    store::load_conversation(&id)
+        .map(Json)
+        .ok_or_else(|| bad(StatusCode::NOT_FOUND, "no such conversation"))
+}
+
+/// The browser saves after every turn; the body is its transcript, kept as-is.
+async fn put_conversation(
+    UrlPath(id): UrlPath<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    store::save_conversation(&id, body)
+        .map(Json)
+        .map_err(|e| bad(StatusCode::BAD_REQUEST, e))
+}
+
+async fn delete_conversation(UrlPath(id): UrlPath<String>) -> Result<Json<Value>, ApiError> {
+    store::delete_conversation(&id)
+        .map(|_| Json(json!({ "id": id })))
+        .map_err(|e| bad(StatusCode::NOT_FOUND, e))
+}
+
 // ---- agent ----
 
 #[derive(Deserialize)]
@@ -276,6 +307,15 @@ async fn main() {
         .route("/api/run", post(run))
         .route("/api/strategies", get(list_strategies).put(put_strategy))
         .route("/api/strategies/{name}", get(get_strategy))
+        .route("/api/conversations", get(list_conversations))
+        .route(
+            "/api/conversations/{id}",
+            get(get_conversation)
+                .put(put_conversation)
+                .delete(delete_conversation)
+                // Transcripts carry every tool result; the 2 MB default is too tight.
+                .layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
         .route("/api/models", get(models))
         .route("/api/chat", post(chat))
         .route("/report/{id}", get(report))
