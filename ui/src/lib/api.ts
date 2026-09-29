@@ -45,6 +45,14 @@ export type ChatEvent =
   | { type: "done" }
   | { type: "error"; error: string };
 
+/** A saved chat. `parts` is the rendered transcript, `history` what the model sees. */
+export type ConversationSummary = { id: string; title: string; updated: number };
+export type Conversation<P> = ConversationSummary & {
+  model: string;
+  parts: P[];
+  history: Message[];
+};
+
 export const api = {
   settings: () => call<SettingsState>("/api/settings"),
   saveKey: (which: KeyName, value: string) =>
@@ -82,6 +90,15 @@ export const api = {
       }
     }
   },
+  conversations: () => call<ConversationSummary[]>("/api/conversations"),
+  conversation: <P>(id: string) => call<Conversation<P>>(`/api/conversations/${id}`),
+  saveConversation: <P>(id: string, v: Omit<Conversation<P>, "id" | "updated">) =>
+    call<ConversationSummary>(`/api/conversations/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(v),
+    }),
+  deleteConversation: (id: string) =>
+    call<{ id: string }>(`/api/conversations/${id}`, { method: "DELETE" }),
   strategies: () => call<string[]>("/api/strategies"),
   strategy: (name: string) => call<{ name: string; code: string }>(`/api/strategies/${name}`),
   saveStrategy: (name: string, code: string) =>

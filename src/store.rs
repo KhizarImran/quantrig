@@ -1,8 +1,10 @@
-//! Where the API keeps its own state: settings, strategies, downloaded candles.
+//! Where the API keeps its own state: settings, strategies, downloaded candles,
+//! chat conversations.
 //!
 //! Nothing here is ever bound into the sandbox.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -22,6 +24,10 @@ pub fn candles_dir() -> PathBuf {
 
 pub fn strategies_dir() -> PathBuf {
     data_dir().join("strategies")
+}
+
+pub fn conversations_dir() -> PathBuf {
+    data_dir().join("conversations")
 }
 
 fn settings_path() -> PathBuf {
@@ -112,6 +118,57 @@ pub fn list_strategies() -> Vec<String> {
     names
 }
 
+/// One chat, keyed by the browser's session id (a UUID, which passes the same
+/// name rules). The transcript is the browser's to shape, so it is kept opaque.
+pub fn conversation_path(id: &str) -> Option<PathBuf> {
+    is_safe_name(id).then(|| conversations_dir().join(format!("{id}.json")))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Writes a conversation, stamping its id and time. Returns what was stored.
+pub fn save_conversation(id: &str, mut body: Value) -> Result<Value, Box<dyn Error>> {
+    let path = conversation_path(id).ok_or("bad conversation id")?;
+    let obj = body.as_object_mut().ok_or("conversation must be a JSON object")?;
+    obj.insert("id".into(), json!(id));
+    obj.insert("updated".into(), json!(now_ms()));
+    std::fs::create_dir_all(conversations_dir())?;
+    std::fs::write(path, serde_json::to_string(&body)?)?;
+    Ok(body)
+}
+
+pub fn load_conversation(id: &str) -> Option<Value> {
+    let raw = std::fs::read_to_string(conversation_path(id)?).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+pub fn delete_conversation(id: &str) -> Result<(), Box<dyn Error>> {
+    let path = conversation_path(id).ok_or("bad conversation id")?;
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+/// Summaries for the sidebar, newest first — not the transcripts.
+/// ponytail: reads every file per call. Fine until someone has thousands of chats.
+pub fn list_conversations() -> Vec<Value> {
+    let mut out: Vec<Value> = std::fs::read_dir(conversations_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .map(|c| json!({ "id": c["id"], "title": c["title"], "updated": c["updated"] }))
+        .collect();
+    out.sort_by_key(|c| std::cmp::Reverse(c["updated"].as_u64().unwrap_or(0)));
+    out
+}
+
 /// QUANTRIG_DATA is process-global, so tests that repoint it must not overlap.
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -162,6 +219,49 @@ mod tests {
         assert_eq!(lse_key().as_deref(), Some("lse-1"), "writing one key dropped the other");
         assert_eq!(opencode_key().as_deref(), Some("oc-1"));
         assert!(set_key("nonsense", "x").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe { std::env::remove_var("QUANTRIG_DATA") };
+    }
+
+    #[test]
+    fn conversation_ids_are_confined_to_their_dir() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(conversation_path("../settings").is_none());
+        assert!(conversation_path("a/b").is_none());
+        assert!(conversation_path("").is_none());
+        assert!(conversation_path("0b6c1d2e-9f1a-4c3b-8d7e-123456789abc").is_some());
+        assert!(save_conversation("../x", json!({})).is_err());
+        assert!(delete_conversation("..").is_err());
+    }
+
+    #[test]
+    fn conversations_round_trip_and_list_newest_first() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("qr-convos-{}", std::process::id()));
+        unsafe { std::env::set_var("QUANTRIG_DATA", &dir) };
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(list_conversations().is_empty(), "no dir yet is an empty list, not an error");
+        let body = json!({"title": "first", "parts": [{"kind": "user", "text": "hi"}]});
+        save_conversation("a", body).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        save_conversation("b", json!({"title": "second"})).unwrap();
+        assert!(save_conversation("c", json!([1, 2])).is_err(), "only objects are stored");
+
+        let loaded = load_conversation("a").unwrap();
+        assert_eq!(loaded["id"], "a");
+        assert_eq!(loaded["parts"][0]["text"], "hi");
+        assert!(loaded["updated"].as_u64().unwrap() > 0);
+
+        let list = list_conversations();
+        let ids: Vec<_> = list.iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["b", "a"]);
+        assert!(list[0].get("parts").is_none(), "the list carries summaries only");
+
+        delete_conversation("a").unwrap();
+        assert!(load_conversation("a").is_none());
+        assert!(delete_conversation("a").is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
         unsafe { std::env::remove_var("QUANTRIG_DATA") };
