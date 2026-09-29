@@ -17,6 +17,11 @@ FROM rust:slim-bookworm AS api
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
+# Cargo gives up when a transfer drops under 10 bytes/30s, which a slow link
+# trips on a cold registry. Keep waiting and retry instead of failing the build.
+ENV CARGO_NET_RETRY=10 \
+    CARGO_HTTP_LOW_SPEED_LIMIT=0 \
+    CARGO_HTTP_TIMEOUT=300
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release && cp target/release/quantrig /quantrig

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Play, Loader2 } from "lucide-react";
 import { api, type Dataset, type RunResult } from "@/lib/api";
 import { HERO, SPECS, TILE_ORDER, formatValue, polarityOf } from "@/lib/format";
@@ -78,8 +78,19 @@ function Summary({ result }: { result: RunResult }) {
   );
 }
 
-export function Backtest({ datasets, onNeedData }: { datasets: Dataset[]; onNeedData: () => void }) {
+export function Backtest({
+  datasets,
+  onNeedData,
+  version,
+}: {
+  datasets: Dataset[];
+  onNeedData: () => void;
+  /** Bumped when the agent writes a strategy, so the list refreshes. */
+  version: number;
+}) {
   const [code, setCode] = useState(EXAMPLE);
+  const [strategies, setStrategies] = useState<string[]>([]);
+  const [strategy, setStrategy] = useState("");
   const [dataset, setDataset] = useState("");
   const [cash, setCash] = useState("10000");
   const [spread, setSpread] = useState("0.0001");
@@ -89,6 +100,19 @@ export function Backtest({ datasets, onNeedData }: { datasets: Dataset[]; onNeed
   const [busy, setBusy] = useState(false);
 
   const selected = dataset || datasets[0]?.name || "";
+
+  useEffect(() => {
+    api.strategies().then(setStrategies).catch(() => setStrategies([]));
+  }, [version]);
+
+  async function load(name: string) {
+    setStrategy(name);
+    try {
+      setCode((await api.strategy(name)).code);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -139,7 +163,26 @@ export function Backtest({ datasets, onNeedData }: { datasets: Dataset[]; onNeed
   return (
     <div className="grid h-full min-h-0 gap-4 p-4 lg:grid-cols-[minmax(420px,42%)_1fr]">
       <form onSubmit={submit} className="grid min-h-0 grid-rows-[1fr_auto] gap-4">
-        <Card className="min-h-0 overflow-hidden py-0">
+        <Card className="grid min-h-0 grid-rows-[auto_1fr] overflow-hidden py-0">
+          <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
+            <span className="text-xs tracking-wide text-muted-foreground uppercase">
+              Strategy
+            </span>
+            {strategies.length > 0 && (
+              <Select value={strategy} onValueChange={(v) => v && load(v)}>
+                <SelectTrigger size="sm" className="w-56 font-mono text-xs">
+                  <SelectValue placeholder="load saved…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {strategies.map((n) => (
+                    <SelectItem key={n} value={n} className="font-mono text-xs">
+                      {n}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
