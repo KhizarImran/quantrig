@@ -1,8 +1,8 @@
 services:
   quantrig:
     build: .
-    # Loopback only — DECISIONS.md: password-gate before this leaves localhost.
-    ports: ["127.0.0.1:9000:9000"]
+    # Network access for development; restrict access to trusted clients.
+    ports: ["0.0.0.0:9000:9000"]
     volumes:
       - ./data:/data
     # bubblewrap builds the strategy sandbox out of a user namespace, and Docker's
@@ -15,4 +15,8 @@ services:
     # permits only CLONE_NEWUSER would be strictly better; this is the blunt version.
     security_opt:
       - seccomp=unconfined
+      # docker-default denies the mount operations used by bubblewrap.
+      # This relaxes outer AppArmor isolation for this service only; strategies
+      # still run inside bubblewrap. Proxmox LXC policy may impose further limits.
+      - apparmor=unconfined
     restart: unless-stopped

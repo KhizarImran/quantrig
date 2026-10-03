@@ -66,6 +66,13 @@ pub fn run_backtest(
 
     if !out_proc.status.success() {
         let stderr = String::from_utf8_lossy(&out_proc.stderr);
+        if stderr.contains("Failed to make / slave") {
+            return Err("the sandbox could not start: a mount operation was denied by \
+                        the container security policy. Check Docker's AppArmor profile \
+                        and, inside Proxmox LXC, the host's AppArmor denials and nesting \
+                        configuration. The strategy has not run."
+                .into());
+        }
         // Distinguish "the sandbox could not start" from "the strategy is wrong";
         // they look identical in the UI otherwise, and the fix is completely different.
         if stderr.contains("create new namespace") {

@@ -151,6 +151,30 @@ fn event(kind: &str, body: Value) -> Value {
     out
 }
 
+/// Providers require object-valued tool arguments even when a model emitted
+/// malformed JSON. Keep history valid; execution still validates the raw call.
+fn history_arguments(args: &Value) -> String {
+    let parsed = match args {
+        Value::String(raw) => serde_json::from_str::<Value>(raw).ok(),
+        Value::Object(_) => Some(args.clone()),
+        _ => None,
+    };
+    parsed.filter(Value::is_object).unwrap_or_else(|| json!({})).to_string()
+}
+
+fn normalize_history(messages: &mut [Value]) {
+    for message in messages {
+        if let Some(calls) = message["tool_calls"].as_array_mut() {
+            for call in calls {
+                if let Some(function) = call["function"].as_object_mut() {
+                    let args = history_arguments(function.get("arguments").unwrap_or(&Value::Null));
+                    function.insert("arguments".into(), Value::String(args));
+                }
+            }
+        }
+    }
+}
+
 /// Accumulates one streamed assistant message: text, reasoning, and tool calls
 /// whose arguments arrive a fragment at a time, keyed by index.
 #[derive(Default)]
@@ -202,7 +226,7 @@ impl Accumulator {
                     .iter()
                     .map(|(id, name, args)| {
                         json!({"id": id, "type": "function",
-                               "function": {"name": name, "arguments": args}})
+                               "function": {"name": name, "arguments": history_arguments(&json!(args))}})
                     })
                     .collect(),
             );
@@ -237,20 +261,22 @@ async fn stream_once(
     }
 
     let mut acc = Accumulator::default();
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     // SSE: `data:` lines, one JSON chunk each, terminated by [DONE]. Chunks can
     // be split across reads, so only complete lines are parsed.
     while let Some(bytes) = res.chunk().await? {
-        buffer.push_str(&String::from_utf8_lossy(&bytes));
-        while let Some(nl) = buffer.find('\n') {
-            let line = buffer[..nl].trim().to_string();
+        buffer.extend_from_slice(&bytes);
+        while let Some(nl) = buffer.iter().position(|b| *b == b'\n') {
+            // Decode complete lines so UTF-8 characters split across network
+            // chunks cannot corrupt JSON or strategy source.
+            let line = std::str::from_utf8(&buffer[..nl])?.trim().to_string();
             buffer.drain(..=nl);
             let Some(payload) = line.strip_prefix("data:") else { continue };
             let payload = payload.trim();
             if payload.is_empty() || payload == "[DONE]" {
                 continue;
             }
-            let Ok(chunk) = serde_json::from_str::<Value>(payload) else { continue };
+            let chunk = serde_json::from_str::<Value>(payload)?;
             if let Some(delta) = chunk["choices"].get(0).map(|c| &c["delta"]) {
                 acc.take_delta(delta, out);
             }
@@ -281,6 +307,8 @@ pub async fn turn(
     let http = reqwest::Client::new();
     let mut messages = vec![json!({"role": "system", "content": SYSTEM})];
     messages.extend(history);
+    // Older saved chats may already contain the malformed call that failed.
+    normalize_history(&mut messages);
 
     for _ in 0..MAX_STEPS {
         let acc = match stream_once(&http, &key, &model, &session, &messages, &out).await {
@@ -341,6 +369,32 @@ pub async fn models() -> Result<Value, Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_history_always_contains_json_object_arguments() {
+        for raw in ["", "{broken", "null", "[]", "42"] {
+            let acc = Accumulator {
+                calls: vec![("call-1".into(), "run_backtest".into(), raw.into())],
+                ..Default::default()
+            };
+            let message = acc.message();
+            assert_eq!(message["tool_calls"][0]["function"]["arguments"], "{}");
+            // Raw malformed arguments must remain invalid for tool execution.
+            assert_eq!(acc.calls[0].2, raw);
+        }
+        let mut history = vec![json!({"role": "assistant", "tool_calls": [
+            {"function": {"name": "run_backtest", "arguments": "{broken"}},
+            {"function": {"name": "run_backtest", "arguments": {"cash": 10000}}},
+            {"function": {"name": "run_backtest", "arguments": "{\"cash\":10000}"}}
+        ]})];
+        normalize_history(&mut history);
+        for (index, expected) in [json!({}), json!({"cash": 10000}), json!({"cash": 10000})]
+            .iter().enumerate()
+        {
+            let raw = history[0]["tool_calls"][index]["function"]["arguments"].as_str().unwrap();
+            assert_eq!(&serde_json::from_str::<Value>(raw).unwrap(), expected);
+        }
+    }
 
     /// Repoints QUANTRIG_DATA, so it holds store::ENV_LOCK for the whole test.
     fn scratch(name: &str) -> (std::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
