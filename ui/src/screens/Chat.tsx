@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { newSessionId } from "@/lib/session";
 import {
   api,
   type ChatEvent,
@@ -10,7 +11,7 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message as Bubble, MessageContent } from "@/components/ai-elements/message";
+import { Message as Bubble, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import {
   Reasoning,
   ReasoningContent,
@@ -74,7 +75,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
   const [saving, setSaving] = useState(false);
   // One id for the life of this conversation: Go caches prompts against it, and
   // the API saves the conversation under it.
-  const [session, setSession] = useState<string>(() => crypto.randomUUID());
+  const [session, setSession] = useState<string>(newSessionId);
   // The API-shaped history, kept separately from what we render.
   const history = useRef<Message[]>([]);
   // Mirrors `parts` synchronously, so the save after a turn sees every delta.
@@ -131,7 +132,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
 
   async function remove(id: string) {
     await api.deleteConversation(id).catch(() => undefined);
-    if (id === session) reset(crypto.randomUUID(), [], []);
+    if (id === session) reset(newSessionId(), [], []);
     refreshList();
   }
 
@@ -231,7 +232,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
           variant="outline"
           size="sm"
           disabled={busy}
-          onClick={() => reset(crypto.randomUUID(), [], [])}
+          onClick={() => reset(newSessionId(), [], [])}
         >
           <Plus className="size-4" /> New chat
         </Button>
@@ -342,7 +343,11 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
               }
               return (
                 <Bubble from="assistant" key={i}>
-                  <MessageContent>{part.text}</MessageContent>
+                  <MessageContent>
+                    <MessageResponse isAnimating={busy && i === parts.length - 1}>
+                      {part.text}
+                    </MessageResponse>
+                  </MessageContent>
                 </Bubble>
               );
             })}
