@@ -35,7 +35,7 @@ on your machine.
   [`backtestingfx`](https://pypi.org/project/backtestingfx/). Each run happens under
   [bubblewrap](https://github.com/containers/bubblewrap) with no network and no credentials,
   and returns summary stats plus an interactive HTML report.
-- **Market data.** FX candles come from [London Strategic Edge](https://londonstrategicedge.com/data)
+- **Market data.** FX, commodity and index candles come from [London Strategic Edge](https://londonstrategicedge.com/data)
   in 1m, 5m, 15m, 30m, 1h, 4h, 1d or 1w timeframes. They are stored locally as parquet.
 - **Bring your own keys.** Market data and model access use your own accounts. quantrig never
   redistributes data or resells tokens.
@@ -163,9 +163,11 @@ The UI has four screens.
 
 1. **Settings.** Paste your `LSE_API_KEY` (London Strategic Edge) and `OPENCODE_API_KEY`
    (OpenCode Go). Each field shows whether a key is set, and entering a new value replaces it.
-2. **Data.** Pick a pair, a timeframe and an optional date range, then download. FX history
-   goes back to 2009. The pair list is built into the UI, and *refresh from LSE* replaces it
-   with the live catalogue, which is cached in `data/pairs.json`. Downloaded datasets are listed
+2. **Data.** Pick an instrument, a timeframe and an optional date range, then download. FX history
+   goes back to 2009. The built-in list includes FX pairs, `XAU/USD` (gold) and `US30`.
+   *Refresh from LSE* replaces it with the live FX, commodity and index catalogue, cached
+   in `data/instruments.json`. Available instruments and history depend on the provider.
+   Downloaded datasets are listed
    with their row count and date span.
 3. **Chat.** Choose a model and ask for a strategy, for example *"Write a mean-reversion
    strategy for EUR/USD 1h and backtest it"*. The agent writes the file, runs it and explains
@@ -278,7 +280,7 @@ API keys are **not** read from environment variables. They are set on the Settin
 ```
 data/
 ├── settings.json              # API keys, mode 0600
-├── pairs.json                 # cached LSE FX catalogue
+├── instruments.json           # cached LSE FX, commodity and index catalogue
 ├── candles/
 │   ├── EUR_USD@1h.parquet     # OHLCV candles
 │   └── EUR_USD@1h.json        # rows / start / end sidecar
@@ -300,7 +302,7 @@ All routes are defined in [`src/main.rs`](src/main.rs). Errors are returned as
 | --- | --- | --- |
 | `GET` | `/api/settings` | Which keys are set (`lse_api_key_set`, `opencode_api_key_set`). Never the keys. |
 | `PUT` | `/api/settings` | Set `lse_api_key` and/or `opencode_api_key`. |
-| `GET` | `/api/pairs` | FX pair catalogue from London Strategic Edge, cached on disk. |
+| `GET` | `/api/pairs` | FX, commodity and index catalogue, cached on disk. `?refresh=true` fetches it again. |
 | `GET` | `/api/datasets` | Downloaded datasets with row count and span. |
 | `POST` | `/api/datasets` | Download candles: `{symbol, timeframe, start?, end?}`. |
 | `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission}` and return `{id, stats}`. |
@@ -372,8 +374,10 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 - **Reports are served from the API's origin.** `report.html` is written into the run's
   writable `/out` directory and shown in an iframe without a `sandbox` attribute. Treat reports
   from strategies you have not read with the same caution as the strategies themselves.
-- **FX only** in the UI's pair list, and **Linux containers only**, because the sandbox relies
-  on bubblewrap and user namespaces.
+- **Contract sizing is FX-only in backtests.** The runner currently uses the engine's
+  100,000-unit contract default. Gold and index candles can be downloaded, but meaningful
+  backtests require instrument-specific contract sizing, which is not exposed yet.
+- **Linux containers only**, because the sandbox relies on bubblewrap and user namespaces.
 
 ## Editing the diagram
 

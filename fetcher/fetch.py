@@ -71,17 +71,29 @@ def normalise(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=["open", "high", "low", "close"])
 
 
+def research_instruments(rows: list) -> list:
+    """Keep FX, commodities and indices; deduplicate vault dataset rows."""
+    categories = {"forex", "fx", "commodity", "commodities", "index", "indices", "indexes"}
+    instruments = {}
+    for row in rows:
+        symbol = row.get("symbol", "")
+        category = str(row.get("category", "")).strip().lower()
+        if symbol and category in categories:
+            instruments.setdefault(symbol, {
+                "symbol": symbol,
+                "name": row.get("name") or row.get("display_name") or symbol,
+            })
+    return sorted(instruments.values(), key=lambda instrument: instrument["symbol"])
+
+
 def catalog(client: LSE, out: str) -> None:
     """catalog() pulls the whole vault index (22,000+ rows, several MB) and
     filters client-side, so this is one big GET that truncates often. Retry it,
-    then cache — the FX pair list changes about never."""
-    rows = retry(lambda: client.catalog("forex"), "catalog")
-    pairs = sorted(
-        ({"symbol": r["symbol"], "name": r.get("name") or r["symbol"]} for r in rows),
-        key=lambda p: p["symbol"],
-    )
+    then cache the instruments supported by the picker."""
+    rows = retry(lambda: client.catalog(), "catalog")
+    pairs = research_instruments(rows)
     if not pairs:
-        raise SystemExit("catalog returned no FX pairs")
+        raise SystemExit("catalog returned no FX, commodity or index instruments")
     pathlib.Path(out).write_text(json.dumps(pairs))
     print(json.dumps(pairs))
 
@@ -137,6 +149,16 @@ def selftest() -> None:
     """The bug this guards: IncompleteRead is an HTTPException, not an OSError,
     so a retry catching only OSError lets it straight through."""
     calls = []
+
+    instruments = research_instruments([
+        {"symbol": "EUR/USD", "category": "Forex"},
+        {"symbol": "XAU/USD", "category": "Commodities", "name": "Gold"},
+        {"symbol": "US30", "category": "Index", "display_name": "Dow Jones"},
+        {"symbol": "US30", "category": "Indices"},
+        {"symbol": "AAPL", "category": "Stocks"},
+    ])
+    assert [r["symbol"] for r in instruments] == ["EUR/USD", "US30", "XAU/USD"]
+    assert instruments[1]["name"] == "Dow Jones"
 
     def flaky():
         calls.append(1)

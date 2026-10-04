@@ -6,7 +6,7 @@ mod fetcher;
 mod sandbox;
 mod store;
 
-use axum::extract::{DefaultBodyLimit, Path as UrlPath};
+use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::Html;
@@ -74,9 +74,15 @@ fn require_key() -> Result<(), ApiError> {
         .ok_or_else(|| bad(StatusCode::CONFLICT, "no London Strategic Edge API key set — add one in Settings"))
 }
 
-async fn pairs() -> Result<Json<Value>, ApiError> {
+#[derive(Deserialize)]
+struct CatalogQuery {
+    #[serde(default)]
+    refresh: bool,
+}
+
+async fn pairs(Query(query): Query<CatalogQuery>) -> Result<Json<Value>, ApiError> {
     require_key()?;
-    let raw = tokio::task::spawn_blocking(|| fetcher::catalog().map_err(|e| e.to_string()))
+    let raw = tokio::task::spawn_blocking(move || fetcher::catalog(query.refresh).map_err(|e| e.to_string()))
         .await
         .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?
         .map_err(|e| bad(StatusCode::BAD_GATEWAY, e))?;
