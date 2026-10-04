@@ -27,7 +27,10 @@ export default function App() {
       className="flex h-screen flex-col gap-0"
     >
       <header className="flex items-center gap-6 border-b px-4 py-2.5">
-        <span className="font-semibold tracking-tight">quantrig</span>
+        <span className="flex items-center gap-2.5 font-semibold tracking-tight">
+          <img src="/quantrig.svg" alt="" width={28} height={28} className="size-7 shrink-0" />
+          quantrig
+        </span>
         <TabsList>
           <TabsTrigger value="chat">
             <MessageSquare className="size-4" /> Chat
