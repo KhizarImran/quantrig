@@ -4,6 +4,8 @@ import { PythonEditor } from "@/components/python-editor";
 import {
   api,
   type ChatEvent,
+  type AIProvider,
+  type Model,
   type ConversationSummary,
   type Message,
 } from "@/lib/api";
@@ -25,7 +27,7 @@ import {
   ToolInput,
   ToolOutput,
 } from "@/components/ai-elements/tool";
-import { Check, Loader2, Plus, Save, Send, Trash2, X } from "lucide-react";
+import { Check, Loader2, PanelLeftClose, PanelLeftOpen, Plus, Save, Send, Trash2, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,8 +66,22 @@ function titleOf(parts: Part[]) {
   return first ? first.text.slice(0, 60) : "New chat";
 }
 
-export function Chat({ onChanged }: { onChanged: () => void }) {
-  const [models, setModels] = useState<string[]>([DEFAULT_MODEL]);
+function AssistantIndicator({ active = false, label = "Assistant" }: { active?: boolean; label?: string }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span aria-hidden="true" className={`flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/5 ${active ? "motion-safe:animate-pulse" : ""}`}>
+        <span className="size-1.5 rounded-full bg-emerald-500" />
+      </span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+export function Chat({ onChanged, version }: { onChanged: () => void; version: number }) {
+  const [models, setModels] = useState<Model[]>([{ id: DEFAULT_MODEL, name: DEFAULT_MODEL }]);
+  const [provider, setProvider] = useState<AIProvider>("opencode");
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [modelLoading, setModelLoading] = useState(false);
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [parts, setPartsState] = useState<Part[]>([]);
   const [input, setInput] = useState("");
@@ -74,6 +90,17 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
   const [convos, setConvos] = useState<ConversationSummary[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [historyCollapsed, setHistoryCollapsed] = useState(() => {
+    try { return localStorage.getItem("quantrig.chat.historyCollapsed") === "true"; }
+    catch { return false; }
+  });
+
+  function toggleHistory() {
+    const next = !historyCollapsed;
+    setHistoryCollapsed(next);
+    try { localStorage.setItem("quantrig.chat.historyCollapsed", String(next)); }
+    catch { /* The sidebar still works when browser storage is unavailable. */ }
+  }
   // One id for the life of this conversation: Go caches prompts against it, and
   // the API saves the conversation under it.
   const [session, setSession] = useState<string>(newSessionId);
@@ -92,9 +119,35 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
   }
 
   useEffect(() => {
-    api.models().then(setModels).catch(() => undefined);
     refreshList();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.models(provider).then((choices) => {
+      if (cancelled) return;
+      setModels(choices);
+      setModel((current) => choices.some((m) => m.id === current) ? current : choices[0]?.id ?? "");
+      setModelError(choices.length ? null : "No models are available for this connection.");
+      setModelLoading(false);
+    }).catch((err: unknown) => {
+      if (cancelled) return;
+      setModels([]);
+      setModel("");
+      setModelError(err instanceof Error ? err.message : String(err));
+      setModelLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [provider, version]);
+
+  function chooseProvider(next: AIProvider) {
+    if (next === provider) return;
+    setProvider(next);
+    setModel("");
+    setModels([]);
+    setModelLoading(true);
+    setModelError(null);
+  }
 
   /** Saved server-side, so a conversation outlives the tab and the browser. */
   async function persist(id: string) {
@@ -102,6 +155,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
       await api.saveConversation(id, {
         title: titleOf(partsRef.current),
         model,
+        provider,
         parts: partsRef.current,
         history: history.current,
       });
@@ -125,6 +179,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
     try {
       const c = await api.conversation<Part>(id);
       reset(c.id, c.parts ?? [], c.history ?? []);
+      chooseProvider(c.provider ?? "opencode");
       if (c.model) setModel(c.model);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -198,7 +253,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
   }
 
   async function send(text: string) {
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busy || !model || modelLoading || modelError) return;
     setInput("");
     setError(null);
     setBusy(true);
@@ -210,7 +265,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
     persist(id);
 
     try {
-      for await (const e of api.chat(model, id, history.current)) apply(e);
+      for await (const e of api.chat(model, id, history.current, provider)) apply(e);
       onChanged(); // the agent may have written a strategy or run a backtest
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -222,22 +277,35 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
 
   return (
     <div
-      className={
-        draft
-          ? "chat-scrollbars grid h-full min-h-0 grid-cols-[14rem_minmax(0,1fr)_minmax(0,1fr)]"
-          : "chat-scrollbars grid h-full min-h-0 grid-cols-[14rem_minmax(0,1fr)]"
-      }
+      className="chat-scrollbars grid h-full min-h-0 motion-safe:transition-[grid-template-columns] motion-safe:duration-200"
+      style={{ gridTemplateColumns: `${historyCollapsed ? "3.5rem" : "14rem"} minmax(0,1fr)${draft ? " minmax(0,1fr)" : ""}` }}
     >
-      <aside className="flex min-h-0 flex-col gap-2 border-r p-3">
+      <aside className={`flex min-h-0 min-w-0 flex-col gap-2 border-r ${historyCollapsed ? "items-center p-2" : "p-3"}`}>
+        <div className="flex w-full items-center justify-between gap-2">
+          {!historyCollapsed && <span className="text-xs font-medium text-muted-foreground">Chats</span>}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleHistory}
+            aria-label={historyCollapsed ? "Expand chat history" : "Collapse chat history"}
+            title={historyCollapsed ? "Expand chat history" : "Collapse chat history"}
+            aria-expanded={!historyCollapsed}
+            aria-controls="chat-history"
+          >
+            {historyCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+          </Button>
+        </div>
         <Button
           variant="outline"
-          size="sm"
+          size={historyCollapsed ? "icon-sm" : "sm"}
           disabled={busy}
           onClick={() => reset(newSessionId(), [], [])}
+          aria-label="New chat"
+          title={historyCollapsed ? "New chat" : undefined}
         >
-          <Plus className="size-4" /> New chat
+          <Plus className="size-4" /> {!historyCollapsed && "New chat"}
         </Button>
-        <nav className="-mx-1 min-h-0 flex-1 overflow-auto">
+        <nav id="chat-history" aria-label="Chat history" hidden={historyCollapsed} className="-mx-1 min-h-0 flex-1 overflow-auto">
           {convos.map((c) => (
             <div
               key={c.id}
@@ -269,24 +337,31 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
         </nav>
       </aside>
 
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col gap-3 p-4">
+      <div className="flex h-full min-h-0 min-w-0 w-full flex-col gap-3 p-4">
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground">
             The agent writes strategies and runs them. It sees its own results.
           </p>
-          <Select value={model} onValueChange={(v) => v && setModel(v)}>
-            <SelectTrigger size="sm" className="w-56 font-mono text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {models.map((m) => (
-                <SelectItem key={m} value={m} className="font-mono text-xs">
-                  {m}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Select value={provider} disabled={busy} onValueChange={(v) => v && chooseProvider(v as AIProvider)}>
+              <SelectTrigger size="sm" className="w-36 text-xs" aria-label="AI provider"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="opencode">OpenCode Go</SelectItem>
+                <SelectItem value="chatgpt">ChatGPT</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={model} disabled={busy || modelLoading || !models.length} onValueChange={(v) => v && setModel(v)}>
+              <SelectTrigger size="sm" className="w-56 text-xs" aria-label="AI model">
+                <SelectValue placeholder={modelLoading ? "Loading models…" : "Choose a model"} />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((m) => <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
+        {provider === "chatgpt" && <p className="text-xs text-muted-foreground">Using ChatGPT plan · Eligible requests use your plan allowance. Manage limits in ChatGPT Settings.</p>}
+        {modelError && <Alert variant="destructive"><AlertDescription>{modelError} Check Connections in Settings.</AlertDescription></Alert>}
 
         <Conversation className="min-h-0 flex-1 rounded-lg border">
           <ConversationContent>
@@ -344,7 +419,8 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
               }
               return (
                 <Bubble from="assistant" key={i}>
-                  <MessageContent>
+                  <AssistantIndicator active={busy && i === parts.length - 1} />
+                  <MessageContent className="ml-7">
                     <MessageResponse isAnimating={busy && i === parts.length - 1}>
                       {part.text}
                     </MessageResponse>
@@ -352,6 +428,11 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
                 </Bubble>
               );
             })}
+            {busy && (
+              <div role="status" aria-live="polite" className="py-1">
+                <AssistantIndicator active label={`${models.find((m) => m.id === model)?.name ?? model} · Working…`} />
+              </div>
+            )}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
@@ -384,7 +465,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
             placeholder="Ask for a strategy, or a change to one…"
             className="min-h-0 flex-1 resize-none rounded-md border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-          <Button type="submit" disabled={busy || !input.trim()}>
+          <Button type="submit" disabled={busy || !input.trim() || !model || modelLoading || !!modelError}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
           </Button>
         </form>
@@ -393,7 +474,7 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
       {/* The agent already wrote this to disk; Save keeps your edits, or a
           copy under a new name, for the Backtest screen's picker. */}
       {draft && (
-        <section className="flex min-h-0 flex-col border-l">
+        <section className="flex min-h-0 min-w-0 flex-col border-l">
           <div className="flex items-center gap-2 border-b px-3 py-2">
             <Input
               value={draft.name}

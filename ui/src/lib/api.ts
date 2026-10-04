@@ -40,6 +40,14 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 
 const body = (v: unknown) => ({ method: "POST", body: JSON.stringify(v) });
 
+export type AIProvider = "opencode" | "chatgpt";
+export type Model = { id: string; name: string };
+export type ChatGPTStatus = {
+  connected: boolean; email?: string; plan_enabled: boolean;
+  needs_sign_in?: boolean; pending: boolean; error?: string | null;
+  callback_available: boolean;
+};
+
 export type KeyName = "lse_api_key" | "opencode_api_key";
 export type SettingsState = Record<`${KeyName}_set`, boolean>;
 
@@ -51,6 +59,7 @@ export type Message = {
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  response_items?: unknown[];
 };
 
 export type ChatEvent =
@@ -66,6 +75,7 @@ export type ChatEvent =
 export type ConversationSummary = { id: string; title: string; updated: number };
 export type Conversation<P> = ConversationSummary & {
   model: string;
+  provider?: AIProvider;
   parts: P[];
   history: Message[];
 };
@@ -77,16 +87,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ [which]: value }),
     }),
-  models: () =>
-    call<{ data: { id: string }[] }>("/api/models").then((r) =>
-      r.data.map((m) => m.id).sort(),
+  chatgptStatus: () => call<ChatGPTStatus>("/api/connections/chatgpt"),
+  chatgptSignIn: () => call<{ url: string; expires_in: number }>("/api/connections/chatgpt/sign-in", body({})),
+  chatgptCancel: () => call<{ cancelled: boolean }>("/api/connections/chatgpt/sign-in", { method: "DELETE" }),
+  chatgptDisconnect: () => call<{ revoked: boolean; warning: string | null }>("/api/connections/chatgpt", { method: "DELETE" }),
+  models: (provider: AIProvider = "opencode") =>
+    call<{ data: { id: string; name?: string }[] }>(`/api/models?provider=${provider}`).then((r) =>
+      r.data.map((m) => ({ id: m.id, name: m.name ?? m.id })),
     ),
   /** Streams one turn. Yields events until `done` or `error`. */
-  chat: async function* (model: string, session: string, messages: Message[]) {
+  chat: async function* (model: string, session: string, messages: Message[], provider: AIProvider = "opencode") {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, session, messages }),
+      body: JSON.stringify({ model, session, messages, provider }),
     });
     if (!res.ok || !res.body) throw new Error((await res.json()).error ?? res.statusText);
 
@@ -94,15 +108,22 @@ export const api = {
     let buffer = "";
     while (true) {
       const { value, done } = await reader.read();
-      if (done) return;
-      buffer += value;
+      if (done) throw new Error("The chat connection ended before the turn completed. Please retry.");
+      buffer = (buffer + value).replace(/\r\n/g, "\n");
       // SSE frames are separated by a blank line; a frame can span reads.
       let split: number;
       while ((split = buffer.indexOf("\n\n")) !== -1) {
         const frame = buffer.slice(0, split);
         buffer = buffer.slice(split + 2);
         for (const line of frame.split("\n")) {
-          if (line.startsWith("data:")) yield JSON.parse(line.slice(5)) as ChatEvent;
+          if (line.startsWith("data:")) {
+            const event = JSON.parse(line.slice(5)) as ChatEvent;
+            yield event;
+            if (event.type === "done" || event.type === "error") {
+              await reader.cancel();
+              return;
+            }
+          }
         }
       }
     }
