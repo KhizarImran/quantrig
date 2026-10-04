@@ -94,6 +94,9 @@ export function Chat({ onChanged, version }: { onChanged: () => void; version: n
     try { return localStorage.getItem("quantrig.chat.historyCollapsed") === "true"; }
     catch { return false; }
   });
+  // Saves for one chat must reach the server in call order. A slow initial
+  // snapshot must not finish after the completed turn and overwrite its history.
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
   function toggleHistory() {
     const next = !historyCollapsed;
@@ -151,18 +154,23 @@ export function Chat({ onChanged, version }: { onChanged: () => void; version: n
 
   /** Saved server-side, so a conversation outlives the tab and the browser. */
   async function persist(id: string) {
-    try {
-      await api.saveConversation(id, {
-        title: titleOf(partsRef.current),
-        model,
-        provider,
-        parts: partsRef.current,
-        history: history.current,
-      });
-      refreshList();
-    } catch (err) {
-      setError(`couldn't save the conversation: ${err instanceof Error ? err.message : err}`);
-    }
+    const snapshot = {
+      title: titleOf(partsRef.current),
+      model,
+      provider,
+      parts: [...partsRef.current],
+      history: [...history.current],
+    };
+    const save = saveQueue.current.catch(() => undefined).then(async () => {
+      try {
+        await api.saveConversation(id, snapshot);
+        refreshList();
+      } catch (err) {
+        setError(`couldn't save the conversation: ${err instanceof Error ? err.message : err}`);
+      }
+    });
+    saveQueue.current = save;
+    await save;
   }
 
   function reset(id: string, next: Part[], messages: Message[]) {
