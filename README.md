@@ -234,16 +234,11 @@ The connector uses OpenAI's [open-source Sign in with ChatGPT flow](https://deve
 Eligible Plus/Pro requests use your ChatGPT plan allowance, subject to account and workspace
 permissions. This does not import your existing ChatGPT conversations.
 
-For a remote Docker server, run this **on the computer running your browser**, replacing
-`USER` and `SERVER` with your SSH login and server address:
-
-```sh
-ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:1455:127.0.0.1:1455 USER@SERVER
-```
-
-Keep that terminal open, click **Continue with ChatGPT**, and approve sign-in and plan usage.
-The browser returns to its local callback port, forwarded through SSH to Quantrig. Settings
-updates automatically. Close the tunnel once connected, then choose **ChatGPT** and an
+For a remote Docker server, configure a temporary SSH port forward on the computer running
+your browser, using your SSH client or saved host alias. Keep it open while you click
+**Continue with ChatGPT** and approve sign-in and plan usage. The browser returns to its
+local callback port, forwarded through SSH to Quantrig. Settings updates automatically.
+Close the port forward once connected, then choose **ChatGPT** and an
 available model on Chat. Port 1455 must be free on your browser computer; stop another
 local OAuth listener if SSH reports the port is occupied.
 

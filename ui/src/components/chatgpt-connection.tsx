@@ -5,8 +5,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 export function ChatGPTConnection({ onChanged }: { onChanged: () => void }) {
   const [status, setStatus] = useState<ChatGPTStatus>();
@@ -14,9 +12,7 @@ export function ChatGPTConnection({ onChanged }: { onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [url, setUrl] = useState<string | null>(null);
-  const [username, setUsername] = useState("");
   const remote = !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
-  const command = `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:1455:127.0.0.1:1455 ${username.trim() || "YOUR_USERNAME"}@${window.location.hostname}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -91,11 +87,8 @@ export function ChatGPTConnection({ onChanged }: { onChanged: () => void }) {
           <details className="rounded-lg border bg-muted/20 p-3 text-xs" open>
             <summary className="cursor-pointer font-medium">Remote server setup</summary>
             <div className="mt-3 space-y-2 text-muted-foreground">
-              <p>Run this on the computer where you will sign in, and leave the terminal open. It connects your browser’s sign-in callback to this server.</p>
-              <Label htmlFor="chatgpt-ssh-user">Server SSH username</Label>
-              <Input id="chatgpt-ssh-user" placeholder="Your Ubuntu username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" className="h-8 text-xs" />
-              <pre className="overflow-x-auto rounded-md bg-background p-2 text-[11px] text-foreground" tabIndex={0}>{command}</pre>
-              <p>Then select Continue with ChatGPT below. Close the tunnel after Settings shows Connected.</p>
+              <p>Remote sign-in needs a temporary SSH port forward from your computer to this server’s callback on port 1455. Set it up in your SSH client or with your saved host alias, then select Continue with ChatGPT. Settings won’t display your SSH username or server address.</p>
+              <p>Close the port forward after this page shows Connected. Token refresh works without it.</p>
             </div>
           </details>
         )}
