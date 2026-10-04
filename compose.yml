@@ -2,7 +2,10 @@ services:
   quantrig:
     build: .
     # Network access for development; restrict access to trusted clients.
-    ports: ["0.0.0.0:9000:9000"]
+    ports:
+      - "0.0.0.0:9000:9000"
+      # OAuth callback reached locally or through an SSH tunnel.
+      - "127.0.0.1:1455:1455"
     volumes:
       - ./data:/data
     # bubblewrap builds the strategy sandbox out of a user namespace, and Docker's

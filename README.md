@@ -2,7 +2,7 @@
 
 **A self-hosted harness for AI-driven FX strategy research.** Ask an agent for a trading
 strategy, and it writes the Python, backtests it against real market data inside a locked-down
-sandbox, and reports the numbers back. You bring your own data and AI keys. Everything runs
+sandbox, and reports the numbers back. You bring your own data account and either an AI key or an eligible ChatGPT plan. Everything runs
 on your machine.
 
 > **Status: early development (v0.1.0).** Research and backtesting work end to end. Live trading,
@@ -27,7 +27,7 @@ on your machine.
 ## What it does
 
 - **Chat agent that writes and tests strategies.** It talks to any model on
-  [OpenCode Go](https://opencode.ai/go) and has five tools: `list_strategies`,
+  [OpenCode Go](https://opencode.ai/go) or your connected ChatGPT account and has five tools: `list_strategies`,
   `read_strategy`, `write_strategy`, `list_datasets` and `run_backtest`. It can write a
   strategy, run it, read the stats and revise it, up to 8 steps per turn. Responses stream as
   they arrive. Conversations are saved and can be reopened.
@@ -127,9 +127,9 @@ subprocess.
 planned (see the [roadmap](#roadmap)).
 
 **Network exposure.** The API has **no authentication yet**. `compose.yml` publishes the
-port on `127.0.0.1:9000` only, and when run outside Docker the binary binds `127.0.0.1:9000` by
+UI port on `0.0.0.0:9000` for network development, and when run outside Docker the binary binds `127.0.0.1:9000` by
 default. Anything that can reach the port can use every endpoint, including the one that runs
-code in the sandbox. Do not expose it to a network until the planned password gate exists.
+code in the sandbox. Restrict access to trusted clients until the planned password gate exists.
 
 **Why `seccomp=unconfined`.** bubblewrap builds the sandbox from a user namespace, and Docker's
 default seccomp profile blocks `clone(CLONE_NEWUSER)`. Without the override the sandbox cannot
@@ -142,7 +142,7 @@ is documented in [`compose.yml`](compose.yml).
 
 **Prerequisites:** Docker with Compose v2, a
 [London Strategic Edge](https://londonstrategicedge.com/data) API key for market data, and an
-[OpenCode Go](https://opencode.ai/go) API key for the chat agent. The Backtest and Data
+[OpenCode Go](https://opencode.ai/go) API key or an eligible ChatGPT subscription for the chat agent. The Backtest and Data
 screens work without the OpenCode key.
 
 ```sh
@@ -164,15 +164,15 @@ docker compose down      # stop; ./data is kept
 
 The UI has four screens.
 
-1. **Settings.** Paste your `LSE_API_KEY` (London Strategic Edge) and `OPENCODE_API_KEY`
-   (OpenCode Go). Each field shows whether a key is set, and entering a new value replaces it.
+1. **Settings.** Connections are grouped into **AI** and **Data**. Add your London Strategic
+   Edge key under Data. Under AI, save an OpenCode Go key or connect ChatGPT (see below).
 2. **Data.** Pick an instrument, a timeframe and an optional date range, then download. FX history
    goes back to 2009. The built-in list includes FX pairs, `XAU/USD` (gold) and `US30`.
    *Refresh from LSE* replaces it with the live FX, commodity and index catalogue, cached
    in `data/instruments.json`. Available instruments and history depend on the provider.
    Downloaded datasets are listed
    with their row count and date span.
-3. **Chat.** Choose a model and ask for a strategy, for example *"Write a mean-reversion
+3. **Chat.** Choose an AI provider and a model and ask for a strategy, for example *"Write a mean-reversion
    strategy for EUR/USD 1h and backtest it"*. The agent writes the file, runs it and explains
    the results, and tool calls and their output appear inline. When the agent writes a
    strategy, it opens in a side panel where you can edit it and save it under a name. Past
@@ -226,6 +226,36 @@ class SmaCross(Strategy):
 
 Precompute indicators in `init()`. `next()` runs once per bar, so slow code there slows the
 whole backtest.
+
+### Connect a ChatGPT subscription
+
+Rebuild with `docker compose up -d --build`, then open **Settings → AI → ChatGPT**.
+The connector uses OpenAI's [open-source Sign in with ChatGPT flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).
+Eligible Plus/Pro requests use your ChatGPT plan allowance, subject to account and workspace
+permissions. This does not import your existing ChatGPT conversations.
+
+For a remote Docker server, run this **on the computer running your browser**, replacing
+`USER` and `SERVER` with your SSH login and server address:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:1455:127.0.0.1:1455 USER@SERVER
+```
+
+Keep that terminal open, click **Continue with ChatGPT**, and approve sign-in and plan usage.
+The browser returns to its local callback port, forwarded through SSH to Quantrig. Settings
+updates automatically. Close the tunnel once connected, then choose **ChatGPT** and an
+available model on Chat. Port 1455 must be free on your browser computer; stop another
+local OAuth listener if SSH reports the port is occupied.
+
+Tokens are stored atomically in `data/chatgpt.json` with owner-only permissions, refreshed
+on demand, and excluded from strategy sandboxes. One ChatGPT account is retained; reconnect
+with that same account after disconnecting. Cancel only stops a pending sign-in. Disconnect
+attempts remote revocation, clears local tokens and reports if remote revocation could not
+be confirmed. Usage and app permissions can also be managed in ChatGPT Settings.
+
+ChatGPT uses [stateless Responses streaming](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
+with the same five local tools. Reasoning and function-call items are saved with the chat
+for later turns. Interrupted or failed responses do not execute pending tool calls.
 
 ## Local development
 
@@ -281,7 +311,8 @@ repository root.
 
 | Variable | Default outside Docker | Set in the image to | Purpose |
 | --- | --- | --- | --- |
-| `QUANTRIG_ADDR` | `127.0.0.1:9000` | `0.0.0.0:9000` | Listen address. Inside the container, compose publishes it on host loopback only. |
+| `QUANTRIG_ADDR` | `127.0.0.1:9000` | `0.0.0.0:9000` | Listen address. Compose publishes port 9000 on all host interfaces. |
+| `QUANTRIG_CHATGPT_CALLBACK_ADDR` | `127.0.0.1:1455` | `0.0.0.0:1455` | OAuth listener. Compose publishes it on host loopback only; the browser callback is `http://127.0.0.1:1455/auth/callback`. |
 | `QUANTRIG_DATA` | `data` | `/data` | State directory (the `./data` volume). |
 | `QUANTRIG_UI` | `ui/dist` | `/app/ui/dist` | Built UI to serve. |
 | `QUANTRIG_ROOT` | the crate directory | `/app` | Where `runner/` and `fetcher/` live. |
@@ -294,6 +325,7 @@ API keys are **not** read from environment variables. They are set on the Settin
 ```
 data/
 ├── settings.json              # API keys, mode 0600
+├── chatgpt.json               # ChatGPT identity, OAuth tokens and stable host ID, mode 0600
 ├── instruments.json           # cached LSE FX, commodity and index catalogue
 ├── candles/
 │   ├── EUR_USD@1h.parquet     # OHLCV candles
@@ -329,8 +361,13 @@ All routes are defined in [`src/main.rs`](src/main.rs). Errors are returned as
 | `GET` | `/api/strategies/{name}` | One strategy's source. |
 | `GET` | `/api/conversations` | Chat summaries, newest first. |
 | `GET` `PUT` `DELETE` | `/api/conversations/{id}` | Load, save (up to 32 MB) or delete one chat. |
-| `GET` | `/api/models` | OpenCode Go's public model list. Needs no key. |
-| `POST` | `/api/chat` | One agent turn `{model, session, messages}`, returned as a server-sent-events stream. |
+| `GET` | `/api/models?provider=opencode` | OpenCode Go public model list (default provider). |
+| `GET` | `/api/models?provider=chatgpt` | Models available to the connected ChatGPT account, with display names. |
+| `GET` | `/api/connections/chatgpt` | Account email, connection/plan status and pending sign-in; never tokens. |
+| `POST` | `/api/connections/chatgpt/sign-in` | Start OAuth; JSON request required. Returns authorization URL. |
+| `DELETE` | `/api/connections/chatgpt/sign-in` | Cancel pending OAuth without disconnecting the active account. |
+| `DELETE` | `/api/connections/chatgpt` | Revoke the session and clear local tokens; reports unconfirmed remote revocation. |
+| `POST` | `/api/chat` | One agent turn `{provider, model, session, messages}` (`provider` defaults to `opencode`), returned as a server-sent-events stream. |
 | `GET` | `/report/{id}` | A run's HTML report. |
 
 Example: set a key, download a dataset and list datasets with `curl`.

@@ -3,6 +3,7 @@
 
 mod agent;
 mod backtests;
+mod chatgpt;
 mod fetcher;
 mod sandbox;
 mod store;
@@ -273,18 +274,25 @@ async fn delete_conversation(UrlPath(id): UrlPath<String>) -> Result<Json<Value>
 
 #[derive(Deserialize)]
 struct ChatRequest {
+    #[serde(default = "default_provider")]
+    provider: String,
     model: String,
     /// Stable for the life of one conversation — Go routes and caches on it.
     session: String,
     messages: Vec<Value>,
 }
 
+fn default_provider() -> String { "opencode".into() }
+
 /// Server-sent events for one turn: text and reasoning deltas, tool calls and
 /// their results, then done. The tool loop runs here, not in the browser.
 async fn chat(
     Json(req): Json<ChatRequest>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    if store::opencode_key().is_none() {
+    if !matches!(req.provider.as_str(), "opencode" | "chatgpt") {
+        return Err(bad(StatusCode::BAD_REQUEST, "Unknown AI provider"));
+    }
+    if req.provider == "opencode" && store::opencode_key().is_none() {
         return Err(bad(
             StatusCode::CONFLICT,
             "no OpenCode Go API key set — add one in Settings",
@@ -292,18 +300,37 @@ async fn chat(
     }
     // Bounded: a slow reader should slow the turn, not grow memory without limit.
     let (tx, rx) = tokio::sync::mpsc::channel(256);
-    tokio::spawn(agent::turn(req.model, req.session, req.messages, tx));
+    tokio::spawn(agent::turn(req.provider, req.model, req.session, req.messages, tx));
 
     let stream = ReceiverStream::new(rx)
         .map(|event| Ok(Event::default().data(event.to_string())));
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-async fn models() -> Result<Json<Value>, ApiError> {
+#[derive(Deserialize)]
+struct ModelsQuery { #[serde(default = "default_provider")] provider: String }
+async fn models(Query(q): Query<ModelsQuery>) -> Result<Json<Value>, ApiError> {
+    if q.provider == "chatgpt" {
+        return chatgpt::models().await.map(Json).map_err(|e| bad(StatusCode::BAD_GATEWAY, e));
+    }
+    if q.provider != "opencode" { return Err(bad(StatusCode::BAD_REQUEST, "Unknown AI provider")); }
     agent::models()
         .await
         .map(Json)
         .map_err(|e| bad(StatusCode::BAD_GATEWAY, e))
+}
+
+async fn chatgpt_status() -> Json<Value> { Json(chatgpt::status().await) }
+async fn chatgpt_start(headers: axum::http::HeaderMap) -> Result<Json<Value>, ApiError> {
+    // A cross-site HTML form must not be able to start or replace a sign-in.
+    if !headers.get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|v| v.split(';').next() == Some("application/json")) {
+        return Err(bad(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Sign-in requires application/json"));
+    }
+    chatgpt::start().await.map(Json).map_err(|e| bad(StatusCode::CONFLICT, e))
+}
+async fn chatgpt_cancel() -> Json<Value> { chatgpt::cancel().await; Json(json!({"cancelled": true})) }
+async fn chatgpt_disconnect() -> Result<Json<Value>, ApiError> {
+    chatgpt::disconnect().await.map(Json).map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
 async fn report(UrlPath(id): UrlPath<String>) -> Result<Html<String>, ApiError> {
@@ -318,10 +345,13 @@ async fn report(UrlPath(id): UrlPath<String>) -> Result<Html<String>, ApiError> 
 
 #[tokio::main]
 async fn main() {
+    chatgpt::listen().await;
     // Client routes fall through to index.html; the API owns /api and /report.
     let spa = ServeDir::new(ui_dir()).fallback(ServeFile::new(ui_dir().join("index.html")));
     let app = Router::new()
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/connections/chatgpt", get(chatgpt_status).delete(chatgpt_disconnect))
+        .route("/api/connections/chatgpt/sign-in", post(chatgpt_start).delete(chatgpt_cancel))
         .route("/api/pairs", get(pairs))
         .route("/api/datasets", get(list_datasets).post(download))
         .route("/api/run", post(run))
