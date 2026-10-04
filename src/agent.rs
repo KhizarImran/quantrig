@@ -6,7 +6,7 @@
 //! The tool loop runs here rather than in the browser so a turn is one request:
 //! ask, run whatever tools the model calls, ask again, until it answers.
 
-use crate::{sandbox, store};
+use crate::{backtests, store};
 use serde_json::{json, Value};
 use std::error::Error;
 
@@ -39,7 +39,9 @@ and the standard library. Do not read files or call APIs.
 
 Work by writing a strategy, running it, and reading the numbers back. When a run \
 disappoints, say what the numbers indicate before changing anything. Never claim a \
-result you have not run.";
+result you have not run. Pass a stable project name to run_backtest for the strategy \
+family (for example Martingale), reusing it across pairs, timeframes and variants \
+so the user can browse those runs together in Backtest history.";
 
 fn tools() -> Value {
     json!([
@@ -72,6 +74,7 @@ fn tools() -> Value {
         "parameters": {"type": "object", "required": ["strategy", "dataset"], "properties": {
           "strategy": {"type": "string"},
           "dataset": {"type": "string", "description": "e.g. EUR_USD@1h"},
+          "project": {"type": "string", "description": "Strategy family/project, e.g. Martingale. Reuse across pairs and timeframes."},
           "cash": {"type": "number", "default": 10000},
           "spread": {"type": "number", "default": 0.0001},
           "commission": {"type": "number", "default": 0.0}}}
@@ -121,20 +124,16 @@ fn call_tool(name: &str, args: &Value) -> String {
             else {
                 return "error: no such strategy — write it first".into();
             };
-            let Some(candles) = store::dataset_path(&s("dataset")).filter(|p| p.exists()) else {
+            let Some(_candles) = store::dataset_path(&s("dataset")).filter(|p| p.exists()) else {
                 return "error: no such dataset — call list_datasets".into();
             };
-            let config = json!({
-                "cash": n("cash", 10000.0), "spread": n("spread", 0.0001),
-                "commission": n("commission", 0.0), "plot": false
-            })
-            .to_string();
-            let dir = store::runs_dir().join("agent");
-            if let Err(e) = std::fs::create_dir_all(&dir) {
-                return format!("error: {e}");
-            }
-            match sandbox::run_backtest(&strategy, &candles, &dir, &config) {
-                Ok(stats) => stats,
+            let code = match std::fs::read_to_string(strategy) {
+                Ok(code) => code,
+                Err(e) => return format!("error: {e}"),
+            };
+            match backtests::execute(code, s("strategy"), s("dataset"), s("project"),
+                backtests::Config { cash: n("cash", 10000.0), spread: n("spread", 0.0001), commission: n("commission", 0.0) }, "agent") {
+                Ok(run) => json!({"id": run.id, "project": run.project, "stats": run.stats, "error": run.error}).to_string(),
                 Err(e) => format!("the strategy failed: {e}"),
             }
         }

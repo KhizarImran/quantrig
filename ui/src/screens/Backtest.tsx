@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Play, Loader2 } from "lucide-react";
-import { api, type Dataset, type RunResult } from "@/lib/api";
+import { api, type Dataset, type RunResult, type RunSummary, type SavedRun } from "@/lib/api";
+import { BacktestHistory } from "@/components/backtest-history";
+import { PythonEditor } from "@/components/python-editor";
 import { HERO, SPECS, TILE_ORDER, formatValue, polarityOf } from "@/lib/format";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -95,7 +97,13 @@ export function Backtest({
   const [cash, setCash] = useState("10000");
   const [spread, setSpread] = useState("0.0001");
   const [commission, setCommission] = useState("0");
-  const [result, setResult] = useState<RunResult | null>(null);
+  const [result, setResult] = useState<SavedRun | null>(null);
+  const [project, setProject] = useState("");
+  const [runLabel, setRunLabel] = useState("SMA crossover");
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -103,12 +111,78 @@ export function Backtest({
 
   useEffect(() => {
     api.strategies().then(setStrategies).catch(() => setStrategies([]));
+    refreshHistory();
   }, [version]);
+
+  async function refreshHistory() {
+    setHistoryLoading(true);
+    try {
+      setRuns(await api.runs());
+      setHistoryError(null);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : String(err));
+    } finally { setHistoryLoading(false); }
+  }
+
+  async function openRun(id: string) {
+    setOpening(true);
+    try {
+      const saved = await api.savedRun(id);
+      setResult(saved);
+      setCode(saved.code);
+      setProject(saved.project);
+      setRunLabel(saved.strategy);
+      setStrategy("");
+      setDataset(saved.dataset);
+      if (saved.config) {
+        setCash(String(saved.config.cash));
+        setSpread(String(saved.config.spread));
+        setCommission(String(saved.config.commission));
+      }
+      setError(saved.error);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : String(err));
+    } finally { setOpening(false); }
+  }
+
+  async function moveProject() {
+    if (!result) return;
+    setOpening(true);
+    try {
+      const saved = await api.moveRun(result.id, project);
+      setResult(saved);
+      setProject(saved.project);
+      await refreshHistory();
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : String(err));
+    } finally { setOpening(false); }
+  }
+
+  function newRun() {
+    setResult(null);
+    setError(null);
+    setCode(EXAMPLE);
+    setStrategy("");
+    setRunLabel("SMA crossover");
+    setCash("10000");
+    setSpread("0.0001");
+    setCommission("0");
+  }
+
+  async function deleteRuns(ids: string[]) {
+    const outcome = await api.deleteRuns(ids);
+    if (result && outcome.deleted.includes(result.id)) newRun();
+    await refreshHistory();
+    if (outcome.failed.length) {
+      throw new Error(`Deleted ${outcome.deleted.length} runs. ${outcome.failed.length} could not be deleted: ${outcome.failed[0].error}`);
+    }
+  }
 
   async function load(name: string) {
     setStrategy(name);
     try {
       setCode((await api.strategy(name)).code);
+      setRunLabel(name);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -126,6 +200,8 @@ export function Backtest({
           cash: Number(cash),
           spread: Number(spread),
           commission: Number(commission),
+          project,
+          strategy: runLabel,
         }),
       );
     } catch (err) {
@@ -133,43 +209,37 @@ export function Backtest({
       setResult(null);
     } finally {
       setBusy(false);
+      refreshHistory();
     }
   }
 
-  function indent(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key !== "Tab") return;
-    e.preventDefault();
-    const el = e.currentTarget;
-    el.setRangeText("    ", el.selectionStart, el.selectionEnd, "end");
-    setCode(el.value);
-  }
-
-  if (datasets.length === 0) {
-    return (
-      <div className="mx-auto w-full max-w-md p-6">
-        <Alert>
-          <AlertTitle>No candles yet</AlertTitle>
-          <AlertDescription className="flex flex-col items-start gap-3">
-            <span>A backtest needs data. Download a pair and timeframe first.</span>
-            <Button size="sm" onClick={onNeedData}>
-              Go to Data
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   return (
-    <div className="grid h-full min-h-0 gap-4 p-4 lg:grid-cols-[minmax(420px,42%)_1fr]">
+    <div className="chat-scrollbars grid h-full min-h-0 grid-cols-[15rem_minmax(0,1fr)]">
+      <BacktestHistory runs={runs} selected={result?.id} disabled={busy || opening} loading={historyLoading}
+        error={historyError} onOpen={openRun} onNew={newRun} onRetry={refreshHistory} onDelete={deleteRuns} />
+      <div className="grid min-h-0 gap-4 overflow-auto p-4 xl:grid-cols-[minmax(360px,42%)_minmax(0,1fr)]">
       <form onSubmit={submit} className="grid min-h-0 grid-rows-[1fr_auto] gap-4">
-        <Card className="grid min-h-0 grid-rows-[auto_1fr] overflow-hidden py-0">
+        <Card className="flex min-h-[28rem] flex-col overflow-hidden py-0">
+          <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="backtest-project">Project</Label>
+              <Input id="backtest-project" list="backtest-projects" value={project} maxLength={80}
+                onChange={(e) => setProject(e.target.value)} placeholder="e.g. Martingale" />
+              <datalist id="backtest-projects">{Array.from(new Set(runs.map((r) => r.project))).map((name) => <option key={name} value={name} />)}</datalist>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="backtest-label">Strategy name</Label>
+              <Input id="backtest-label" value={runLabel} onChange={(e) => setRunLabel(e.target.value)} placeholder="e.g. Martingale v2" />
+            </div>
+            <p className="text-xs text-muted-foreground sm:col-span-2">Use the same project for different pairs and timeframes. Leaving it blank saves to Ungrouped.</p>
+            {result && <Button type="button" size="sm" variant="outline" disabled={opening || busy || (project.trim() || "Ungrouped") === result.project} onClick={moveProject}>Move saved run to this project</Button>}
+          </div>
           <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
             <span className="text-xs tracking-wide text-muted-foreground uppercase">
               Strategy
             </span>
             {strategies.length > 0 && (
-              <Select value={strategy} onValueChange={(v) => v && load(v)}>
+              <Select value={strategy} disabled={busy || opening} onValueChange={(v) => v && load(v)}>
                 <SelectTrigger size="sm" className="w-56 font-mono text-xs">
                   <SelectValue placeholder="load saved…" />
                 </SelectTrigger>
@@ -183,22 +253,20 @@ export function Backtest({
               </Select>
             )}
           </div>
-          <textarea
+          <PythonEditor
             value={code}
-            onChange={(e) => setCode(e.target.value)}
-            onKeyDown={indent}
-            spellCheck={false}
-            className="size-full resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed outline-none"
+            onChange={setCode}
           />
         </Card>
 
         <Card>
           <CardContent className="flex flex-wrap items-end gap-3">
+            {datasets.length === 0 && <Alert><AlertDescription>Download candles to run a backtest. Saved reports are still available.<Button type="button" size="sm" variant="outline" onClick={onNeedData}>Go to Data</Button></AlertDescription></Alert>}
             <div className="min-w-48 flex-[2] space-y-2">
               <Label>Dataset</Label>
               <Select value={selected} onValueChange={(v) => v && setDataset(v)}>
                 <SelectTrigger className="w-full font-mono">
-                  <SelectValue />
+                  <SelectValue placeholder="Choose a dataset" />
                 </SelectTrigger>
                 <SelectContent>
                   {datasets.map((d) => (
@@ -226,7 +294,7 @@ export function Backtest({
                 className="font-mono"
               />
             </div>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy || opening || !datasets.some((d) => d.name === selected)}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
               Run backtest
             </Button>
@@ -235,6 +303,11 @@ export function Backtest({
       </form>
 
       <Card className="flex min-h-0 flex-col overflow-hidden py-0">
+        {result && <div className="border-b px-4 py-3 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">{result.project} / {result.strategy}</p>
+          <p className="mt-1">{result.dataset || "Archived report"} · {new Date(result.created).toLocaleString()} · {result.source === "agent" ? "Chat run" : "Saved run"}</p>
+          <p className="mt-1">Running again creates a new entry.</p>
+        </div>}
         {busy && <div className="h-0.5 w-full animate-pulse bg-primary" />}
 
         {error && (
@@ -261,15 +334,16 @@ export function Backtest({
 
         {result && !error && (
           <>
-            <Summary result={result} />
-            <iframe
+            {result.stats ? <Summary result={{ id: result.id, stats: result.stats }} /> : <p className="p-4 text-xs text-muted-foreground">This older run saved only its source and report. Original settings and summary stats are unavailable.</p>}
+            {result.report_available && <iframe
               src={`/report/${result.id}`}
               title="Backtest report"
-              className="min-h-0 flex-1 border-t bg-white"
-            />
+              className="min-h-80 flex-1 border-t bg-white"
+            />}
           </>
         )}
       </Card>
+      </div>
     </div>
   );
 }
