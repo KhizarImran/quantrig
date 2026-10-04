@@ -2,6 +2,7 @@
 //! a future TUI. Nothing else touches the engine.
 
 mod agent;
+mod backtests;
 mod fetcher;
 mod sandbox;
 mod store;
@@ -160,40 +161,53 @@ struct RunRequest {
     cash: f64,
     spread: f64,
     commission: f64,
+    #[serde(default)]
+    project: String,
+    #[serde(default)]
+    strategy: String,
 }
 
 async fn run(Json(req): Json<RunRequest>) -> Result<Json<Value>, ApiError> {
-    let candles = store::dataset_path(&req.dataset)
-        .filter(|p| p.exists())
-        .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "unknown dataset — download it first"))?;
-
-    let id = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-        .to_string();
-    let dir = store::runs_dir().join(&id);
-    std::fs::create_dir_all(&dir).map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let strategy = dir.join("strategy.py");
-    std::fs::write(&strategy, &req.code).map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let config = json!({
-        "cash": req.cash, "spread": req.spread, "commission": req.commission, "plot": true
-    })
-    .to_string();
-
-    // Blocking: bwrap + a full backtest. ponytail: one run at a time is fine until
-    // someone complains — the queue lands with concurrent users.
-    let stats = tokio::task::spawn_blocking(move || {
-        // Box<dyn Error> isn't Send; the message is all the caller needs.
-        sandbox::run_backtest(&strategy, &candles, &dir, &config).map_err(|e| e.to_string())
+    let run = tokio::task::spawn_blocking(move || {
+        backtests::execute(req.code, req.strategy, req.dataset, req.project,
+            backtests::Config { cash: req.cash, spread: req.spread, commission: req.commission }, "manual")
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?
     .map_err(|e| bad(StatusCode::BAD_REQUEST, e))?;
 
-    let stats: Value = serde_json::from_str(&stats).map_err(|e| bad(StatusCode::BAD_GATEWAY, e))?;
-    Ok(Json(json!({ "id": id, "stats": stats })))
+    if let Some(error) = &run.error { return Err(bad(StatusCode::BAD_REQUEST, error)); }
+    Ok(Json(serde_json::to_value(run).map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?))
+}
+
+async fn list_runs() -> Json<Value> { Json(json!(backtests::list())) }
+
+#[derive(Deserialize)]
+struct DeleteRunsRequest { ids: Vec<String> }
+
+async fn delete_runs(Json(req): Json<DeleteRunsRequest>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || backtests::delete_many(req.ids).map_err(|e| e.to_string()))
+        .await.map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .map(Json).map_err(|e| bad(StatusCode::BAD_REQUEST, e))
+}
+
+async fn delete_run(UrlPath(id): UrlPath<String>) -> Result<Json<Value>, ApiError> {
+    delete_runs(Json(DeleteRunsRequest { ids: vec![id] })).await
+}
+
+async fn get_run(UrlPath(id): UrlPath<String>) -> Result<Json<Value>, ApiError> {
+    if !backtests::valid_id(&id) { return Err(bad(StatusCode::BAD_REQUEST, "bad run id")); }
+    backtests::load(&id).and_then(|run| Ok(serde_json::to_value(run)?))
+        .map(Json).map_err(|e| bad(StatusCode::NOT_FOUND, e))
+}
+
+#[derive(Deserialize)]
+struct ProjectRequest { project: String }
+
+async fn move_run(UrlPath(id): UrlPath<String>, Json(req): Json<ProjectRequest>) -> Result<Json<Value>, ApiError> {
+    backtests::move_project(&id, &req.project).and_then(|run| Ok(serde_json::to_value(run)?))
+        .map(Json).map_err(|e| bad(StatusCode::BAD_REQUEST, e))
 }
 
 // ---- strategies ----
@@ -311,6 +325,8 @@ async fn main() {
         .route("/api/pairs", get(pairs))
         .route("/api/datasets", get(list_datasets).post(download))
         .route("/api/run", post(run))
+        .route("/api/runs", get(list_runs).delete(delete_runs))
+        .route("/api/runs/{id}", get(get_run).put(move_run).delete(delete_run))
         .route("/api/strategies", get(list_strategies).put(put_strategy))
         .route("/api/strategies/{name}", get(get_strategy))
         .route("/api/conversations", get(list_conversations))

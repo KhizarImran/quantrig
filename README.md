@@ -35,6 +35,9 @@ on your machine.
   [`backtestingfx`](https://pypi.org/project/backtestingfx/). Each run happens under
   [bubblewrap](https://github.com/containers/bubblewrap) with no network and no credentials,
   and returns summary stats plus an interactive HTML report.
+- **Backtest projects and history.** Manual and chat-launched runs are saved in the
+  Backtest sidebar, grouped by a strategy project such as Martingale across pairs and
+  timeframes. Reopen a run to inspect its source, settings, statistics and report.
 - **Market data.** FX, commodity and index candles come from [London Strategic Edge](https://londonstrategicedge.com/data)
   in 1m, 5m, 15m, 30m, 1h, 4h, 1d or 1w timeframes. They are stored locally as parquet.
 - **Bring your own keys.** Market data and model access use your own accounts. quantrig never
@@ -174,9 +177,20 @@ The UI has four screens.
    the results, and tool calls and their output appear inline. When the agent writes a
    strategy, it opens in a side panel where you can edit it and save it under a name. Past
    conversations are in the sidebar.
-4. **Backtest.** Load a saved strategy or edit the example, then choose a dataset, cash,
-   spread and commission and run it. You get summary stats (return, win rate, profit factor,
-   max drawdown, Sharpe and others) and the full `backtestingfx` HTML report.
+4. **Backtest.** Load a saved strategy or edit the example, give it a strategy name and
+   choose or type a **Project** (for example Martingale). Use the same project for different
+   pairs, timeframes and strategy variants. Choose a dataset, cash, spread and commission
+   and run it. The sidebar saves completed and failed runs, newest first within each project.
+   Click a run to reopen its exact source, settings, summary stats and HTML report; running
+   it again creates a separate entry. **Move saved run to this project** changes its group.
+   Runs from Chat also appear here; the agent can supply the project name. Blank projects
+   go into **Ungrouped**. Older manual reports appear there too, but their original settings,
+   dataset and summary stats were not persisted. Historical agent runs from before this
+   feature cannot be recovered as full run records.
+   Use the trash icon on a run to delete it, or the trash icon beside a project to delete
+   all its displayed runs, including legacy Ungrouped reports. A confirmation shows the
+   affected run count. Deletion removes run snapshots, results and reports permanently;
+   saved strategy files and downloaded datasets are kept.
 
 ### Writing a strategy by hand
 
@@ -285,9 +299,8 @@ data/
 │   ├── EUR_USD@1h.parquet     # OHLCV candles
 │   └── EUR_USD@1h.json        # rows / start / end sidecar
 ├── strategies/*.py            # strategies saved by you or the agent
-├── runs/
-│   ├── <id>/                  # one Backtest-screen run: strategy.py, report.html
-│   └── agent/                 # scratch output for the agent's runs
+├── backtests/<id>.json        # project, source, settings, stats/error for each run
+├── runs/<id>/                # strategy.py and report.html for manual and agent runs
 └── conversations/*.json       # saved chats
 ```
 
@@ -305,7 +318,12 @@ All routes are defined in [`src/main.rs`](src/main.rs). Errors are returned as
 | `GET` | `/api/pairs` | FX, commodity and index catalogue, cached on disk. `?refresh=true` fetches it again. |
 | `GET` | `/api/datasets` | Downloaded datasets with row count and span. |
 | `POST` | `/api/datasets` | Download candles: `{symbol, timeframe, start?, end?}`. |
-| `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission}` and return `{id, stats}`. |
+| `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission, project?, strategy?}` and return the saved run. Failures return an error and remain in history. |
+| `GET` | `/api/runs` | Backtest summaries, newest first, including project, strategy, dataset and status. |
+| `GET` | `/api/runs/{id}` | Full saved run: source, settings, stats/error and report availability. |
+| `PUT` | `/api/runs/{id}` | Move a saved run to `{project}`. |
+| `DELETE` | `/api/runs/{id}` | Delete one run's metadata and artifacts. Returns `{deleted, failed}`. |
+| `DELETE` | `/api/runs` | Delete the explicitly confirmed `{ids: [...]}`. Returns `{deleted, failed}`; new runs outside that snapshot are kept. |
 | `GET` | `/api/strategies` | Saved strategy names. |
 | `PUT` | `/api/strategies` | Save `{name, code}`. |
 | `GET` | `/api/strategies/{name}` | One strategy's source. |
@@ -331,6 +349,7 @@ curl localhost:9000/api/datasets
 .
 ├── src/
 │   ├── main.rs        # axum router and handlers: the HTTP API
+│   ├── backtests.rs   # shared run execution, project grouping and saved history
 │   ├── agent.rs       # chat agent: OpenCode Go client, tools, tool loop
 │   ├── sandbox.rs     # bubblewrap invocation + sandbox escape tests
 │   ├── fetcher.rs     # spawns fetch.py with the LSE key
@@ -359,7 +378,7 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 - **Live execution.** An MT5 bridge, reconciliation and kill switches, with one order-intent
   abstraction shared by backtest and live to limit semantic drift.
 - **TUI** (ratatui). Monitoring-only, for live trading on a headless VPS.
-- **Run queue and history.** Concurrent backtests, and stored equity curves and trade lists
+- **Run queue and richer history.** Bounded concurrent backtests, and stored equity curves and trade lists
   alongside the scalar stats.
 - **Template repo and published image.** The `git clone && docker compose up` distribution
   model described in DECISIONS.md.

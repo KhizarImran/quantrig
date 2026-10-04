@@ -2,6 +2,23 @@
 
 export type Stats = Record<string, number>;
 export type RunResult = { id: string; stats: Stats };
+export type RunSummary = {
+  id: string;
+  project: string;
+  strategy: string;
+  dataset: string;
+  created: number;
+  source: "manual" | "agent" | "legacy";
+  status: "completed" | "failed";
+  return_pct: number | null;
+};
+export type SavedRun = Omit<RunSummary, "status" | "return_pct"> & {
+  code: string;
+  config: { cash: number; spread: number; commission: number } | null;
+  stats: Stats | null;
+  error: string | null;
+  report_available: boolean;
+};
 export type Pair = { symbol: string; name: string };
 export type Dataset = {
   name: string;
@@ -108,6 +125,14 @@ export const api = {
     }),
   pairs: (refresh = false) => call<Pair[]>(`/api/pairs?refresh=${refresh}`),
   datasets: () => call<Dataset[]>("/api/datasets"),
+  runs: () => call<RunSummary[]>("/api/runs"),
+  deleteRuns: (ids: string[]) => call<{ deleted: string[]; failed: { id: string; error: string }[] }>("/api/runs", {
+    method: "DELETE", body: JSON.stringify({ ids }),
+  }),
+  savedRun: (id: string) => call<SavedRun>(`/api/runs/${id}`),
+  moveRun: (id: string, project: string) => call<SavedRun>(`/api/runs/${id}`, {
+    method: "PUT", body: JSON.stringify({ project }),
+  }),
   download: (v: { symbol: string; timeframe: string; start: string; end: string }) =>
     call<{ name: string; summary: { rows: number; start: string; end: string } }>(
       "/api/datasets",
@@ -119,7 +144,9 @@ export const api = {
     cash: number;
     spread: number;
     commission: number;
-  }) => call<RunResult>("/api/run", body(v)),
+    project?: string;
+    strategy?: string;
+  }) => call<SavedRun>("/api/run", body(v)),
 };
 
 /** The vault's candle resolutions, coarse first — these are the useful ones for FX. */
