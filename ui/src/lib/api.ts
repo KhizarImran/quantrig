@@ -106,7 +106,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ name, code }),
     }),
-  pairs: () => call<Pair[]>("/api/pairs"),
+  pairs: (refresh = false) => call<Pair[]>(`/api/pairs?refresh=${refresh}`),
   datasets: () => call<Dataset[]>("/api/datasets"),
   download: (v: { symbol: string; timeframe: string; start: string; end: string }) =>
     call<{ name: string; summary: { rows: number; start: string; end: string } }>(

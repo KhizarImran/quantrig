@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { api, TIMEFRAMES, type Dataset, type Pair } from "@/lib/api";
-import { FX_PAIRS } from "@/lib/pairs";
+import { RESEARCH_INSTRUMENTS } from "@/lib/pairs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,7 +29,7 @@ function defaultStart() {
 
 export function Data({ datasets, reload }: { datasets: Dataset[]; reload: () => void }) {
   // Built-in list by default: nothing is fetched until you ask for it.
-  const [pairs, setPairs] = useState<Pair[]>(FX_PAIRS);
+  const [pairs, setPairs] = useState<Pair[]>(RESEARCH_INSTRUMENTS);
   const [pairsError, setPairsError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [symbol, setSymbol] = useState("EUR/USD");
@@ -43,7 +43,11 @@ export function Data({ datasets, reload }: { datasets: Dataset[]; reload: () => 
     setRefreshing(true);
     setPairsError(null);
     try {
-      setPairs(await api.pairs());
+      const instruments = await api.pairs(true);
+      setPairs(instruments);
+      if (!instruments.some((p) => p.symbol === symbol) && instruments.length > 0) {
+        setSymbol(instruments[0].symbol);
+      }
     } catch (e) {
       setPairsError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -71,15 +75,15 @@ export function Data({ datasets, reload }: { datasets: Dataset[]; reload: () => 
         <CardHeader>
           <CardTitle>Download candles</CardTitle>
           <CardDescription>
-            Pulled from London Strategic Edge and stored as parquet. FX history reaches back
-            to 2009.
+            FX, commodities and indices from London Strategic Edge, stored as parquet.
+            Refresh the catalogue to see the instruments currently available.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={download} className="grid gap-4 sm:grid-cols-[2fr_1fr_1fr_1fr_auto] sm:items-end">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Pair</Label>
+                <Label>Instrument</Label>
                 <button
                   type="button"
                   onClick={refreshPairs}
@@ -96,7 +100,7 @@ export function Data({ datasets, reload }: { datasets: Dataset[]; reload: () => 
                 <SelectContent>
                   {pairs.map((p) => (
                     <SelectItem key={p.symbol} value={p.symbol} className="font-mono">
-                      {p.symbol}
+                      {p.symbol}{p.name !== p.symbol ? ` — ${p.name}` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

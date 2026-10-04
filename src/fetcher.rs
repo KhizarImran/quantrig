@@ -31,15 +31,18 @@ fn run(args: &[&str]) -> Result<String, Box<dyn Error>> {
     Ok(String::from_utf8(out.stdout)?)
 }
 
-/// Every FX pair the vault carries, as JSON.
+/// FX, commodity and index instruments the vault carries, as JSON.
 ///
 /// The upstream catalog is a multi-megabyte single GET that truncates often, so
 /// the answer is cached on disk. The pair list changes about never.
-pub fn catalog() -> Result<String, Box<dyn Error>> {
-    let cache = store::data_dir().join("pairs.json");
-    if let Ok(cached) = std::fs::read_to_string(&cache) {
-        if cached.len() > 2 {
-            return Ok(cached);
+pub fn catalog(refresh: bool) -> Result<String, Box<dyn Error>> {
+    // A new cache avoids reusing the previous Forex-only catalogue.
+    let cache = store::data_dir().join("instruments.json");
+    if !refresh {
+        if let Ok(cached) = std::fs::read_to_string(&cache) {
+            if cached.len() > 2 {
+                return Ok(cached);
+            }
         }
     }
     std::fs::create_dir_all(store::data_dir())?;

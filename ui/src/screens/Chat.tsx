@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { newSessionId } from "@/lib/session";
+import { PythonEditor } from "@/components/python-editor";
 import {
   api,
   type ChatEvent,
@@ -223,8 +224,8 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
     <div
       className={
         draft
-          ? "grid h-full min-h-0 grid-cols-[14rem_minmax(0,1fr)_minmax(0,1fr)]"
-          : "grid h-full min-h-0 grid-cols-[14rem_minmax(0,1fr)]"
+          ? "chat-scrollbars grid h-full min-h-0 grid-cols-[14rem_minmax(0,1fr)_minmax(0,1fr)]"
+          : "chat-scrollbars grid h-full min-h-0 grid-cols-[14rem_minmax(0,1fr)]"
       }
     >
       <aside className="flex min-h-0 flex-col gap-2 border-r p-3">
@@ -421,11 +422,9 @@ export function Chat({ onChanged }: { onChanged: () => void }) {
               <X className="size-4" />
             </Button>
           </div>
-          <textarea
+          <PythonEditor
             value={draft.code}
-            onChange={(e) => setDraft({ ...draft, code: e.target.value, saved: false })}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed outline-none"
+            onChange={(code) => setDraft({ ...draft, code, saved: false })}
           />
         </section>
       )}
