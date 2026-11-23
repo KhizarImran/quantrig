@@ -1,0 +1,9 @@
+https://{$QUANTRIG_HOSTNAME} {
+	basic_auth {
+		quantrig {$QUANTRIG_PASSWORD_HASH}
+	}
+
+	reverse_proxy quantrig:9000 {
+		header_up -Authorization
+	}
+}

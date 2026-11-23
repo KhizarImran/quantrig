@@ -13,6 +13,7 @@ on your machine.
 - [Architecture](#architecture)
 - [Security model](#security-model)
 - [Quick start](#quick-start)
+  - [Enable network access](#enable-network-access)
 - [Using quantrig](#using-quantrig)
 - [Local development](#local-development)
 - [Configuration](#configuration)
@@ -126,10 +127,10 @@ subprocess.
 *whether* each key is set and never returns a key's value. Envelope encryption at rest is
 planned (see the [roadmap](#roadmap)).
 
-**Network exposure.** The API has **no authentication yet**. `compose.yml` publishes the
-UI port on `0.0.0.0:9000` for network development, and when run outside Docker the binary binds `127.0.0.1:9000` by
-default. Anything that can reach the port can use every endpoint, including the one that runs
-code in the sandbox. Restrict access to trusted clients until the planned password gate exists.
+**Network access.** The API trusts clients that can reach it directly. The standalone binary
+binds to loopback by default, and Compose publishes the application and OAuth callback ports
+on host loopback. For remote browser access, use the [HTTPS overlay](#enable-network-access),
+which requires a password for the UI, API, and reports.
 
 **Why `seccomp=unconfined`.** bubblewrap builds the sandbox from a user namespace, and Docker's
 default seccomp profile blocks `clone(CLONE_NEWUSER)`. Without the override the sandbox cannot
@@ -140,10 +141,13 @@ is documented in [`compose.yml`](compose.yml).
 
 ## Quick start
 
-**Prerequisites:** Docker with Compose v2, a
+**Prerequisites:** Docker Engine 28.0 or newer with Compose v2, a
 [London Strategic Edge](https://londonstrategicedge.com/data) API key for market data, and an
 [OpenCode Go](https://opencode.ai/go) API key or an eligible ChatGPT subscription for the chat agent. The Backtest and Data
 screens work without the OpenCode key.
+
+Older Docker Engine releases can expose loopback-published ports to hosts on the same local
+network. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/)
 
 ```sh
 git clone https://github.com/KhizarImran/quantrig.git
@@ -159,6 +163,35 @@ next to `compose.yml`.
 docker compose logs -f   # API and fetcher output
 docker compose down      # stop; ./data is kept
 ```
+
+### Enable network access
+
+Point a public DNS hostname at the Docker host and allow incoming TCP traffic on ports 80
+and 443. Caddy obtains and renews the TLS certificate. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https)
+
+Generate a password hash with Caddy's interactive prompt.
+
+```sh
+docker run --rm -it caddy:2.11.9-alpine caddy hash-password
+```
+
+In the repository root, add these entries to `.env`. Replace the example hostname and paste
+the full bcrypt hash between the single quotes so Compose preserves its `$` characters.
+
+```dotenv
+QUANTRIG_HOSTNAME=quantrig.example.com
+QUANTRIG_PASSWORD_HASH='<bcrypt hash>'
+```
+
+Start Compose with the network overlay.
+
+```sh
+docker compose -f compose.yml -f compose.network.yml up -d --build
+```
+
+Open your HTTPS hostname and sign in with username `quantrig` and the password you hashed.
+The application port 9000 and the OAuth callback port 1455 are available on the Docker host's
+loopback interface. To connect ChatGPT from a remote browser, use the [SSH callback tunnel](#connect-a-chatgpt-subscription).
 
 ## Using quantrig
 
@@ -311,7 +344,7 @@ repository root.
 
 | Variable | Default outside Docker | Set in the image to | Purpose |
 | --- | --- | --- | --- |
-| `QUANTRIG_ADDR` | `127.0.0.1:9000` | `0.0.0.0:9000` | Listen address. Compose publishes port 9000 on all host interfaces. |
+| `QUANTRIG_ADDR` | `127.0.0.1:9000` | `0.0.0.0:9000` | Listen address. Compose publishes port 9000 on host loopback. |
 | `QUANTRIG_CHATGPT_CALLBACK_ADDR` | `127.0.0.1:1455` | `0.0.0.0:1455` | OAuth listener. Compose publishes it on host loopback only; the browser callback is `http://127.0.0.1:1455/auth/callback`. |
 | `QUANTRIG_DATA` | `data` | `/data` | State directory (the `./data` volume). |
 | `QUANTRIG_UI` | `ui/dist` | `/app/ui/dist` | Built UI to serve. |
@@ -398,6 +431,7 @@ curl localhost:9000/api/datasets
 ├── Dockerfile         # UI build → Rust build → Python 3.12 + bwrap runtime
 ├── compose.yml        # the service: loopback port, ./data volume, seccomp note
 ├── compose.dev.yml    # dev overlay: live-mount UI build and Python scripts
+├── compose.network.yml # network overlay: Caddy with HTTPS and a password
 └── DECISIONS.md       # scoping and design decisions
 ```
 
@@ -408,8 +442,7 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 - **MCP server** (rmcp). Would let your own agent CLI drive quantrig from the host with
   `list_strategies`, `write_strategy`, `run_backtest`, `get_results` and `import_data`, using
   its own auth.
-- **Password gate and encrypted keys.** A login in front of the API and envelope encryption
-  for stored keys, needed before quantrig leaves localhost.
+- **Encrypted keys.** Envelope encryption for stored keys.
 - **Walk-forward / out-of-sample enforcement** in the runner, so an agent cannot report a
   curve-fit result as a win.
 - **Live execution.** An MT5 bridge, reconciliation and kill switches, with one order-intent
@@ -423,7 +456,6 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 
 ## Known limitations
 
-- **No authentication.** Keep the port on loopback (see [Security model](#security-model)).
 - **One backtest at a time per request.** Runs are synchronous, with no queue.
 - **Stats are scalars only.** Equity curves and trade lists are in the HTML report, not in the
   API response.
