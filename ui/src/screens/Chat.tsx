@@ -77,7 +77,11 @@ function AssistantIndicator({ active = false, label = "Assistant" }: { active?: 
   );
 }
 
-export function Chat({ onChanged, version }: { onChanged: () => void; version: number }) {
+export function Chat({ onChanged, onBacktestFinished, version }: {
+  onChanged: () => void;
+  onBacktestFinished: () => void;
+  version: number;
+}) {
   const [models, setModels] = useState<Model[]>([{ id: DEFAULT_MODEL, name: DEFAULT_MODEL }]);
   const [provider, setProvider] = useState<AIProvider>("opencode");
   const [modelError, setModelError] = useState<string | null>(null);
@@ -237,6 +241,7 @@ export function Chat({ onChanged, version }: { onChanged: () => void; version: n
         ]);
       case "tool_result": {
         history.current.push(e.message);
+        if (e.message.name === "run_backtest") onBacktestFinished();
         // The agent wrote a strategy: split the screen and show it.
         const call = partsRef.current.find(
           (p) => p.kind === "tool" && p.id === e.message.tool_call_id,
@@ -274,7 +279,7 @@ export function Chat({ onChanged, version }: { onChanged: () => void; version: n
 
     try {
       for await (const e of api.chat(model, id, history.current, provider)) apply(e);
-      onChanged(); // the agent may have written a strategy or run a backtest
+      onChanged(); // the agent may have written a strategy
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

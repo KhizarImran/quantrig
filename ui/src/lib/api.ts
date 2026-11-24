@@ -155,7 +155,7 @@ export const api = {
     }),
   pairs: (refresh = false) => call<Pair[]>(`/api/pairs?refresh=${refresh}`),
   datasets: () => call<Dataset[]>("/api/datasets"),
-  runs: () => call<RunSummary[]>("/api/runs"),
+  runs: (signal?: AbortSignal) => call<RunSummary[]>("/api/runs", { signal }),
   deleteRuns: (ids: string[]) => call<{ deleted: string[]; failed: { id: string; error: string }[] }>("/api/runs", {
     method: "DELETE", body: JSON.stringify({ ids }),
   }),

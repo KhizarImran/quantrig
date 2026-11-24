@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, Loader2 } from "lucide-react";
 import { api, type Dataset, type RunResult, type RunSummary, type SavedRun } from "@/lib/api";
 import { BacktestHistory } from "@/components/backtest-history";
@@ -84,11 +84,13 @@ export function Backtest({
   datasets,
   onNeedData,
   version,
+  historyVersion,
 }: {
   datasets: Dataset[];
   onNeedData: () => void;
   /** Bumped when the agent writes a strategy, so the list refreshes. */
   version: number;
+  historyVersion: number;
 }) {
   const [code, setCode] = useState(EXAMPLE);
   const [strategies, setStrategies] = useState<string[]>([]);
@@ -103,6 +105,7 @@ export function Backtest({
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const historyRequest = useRef<AbortController | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -114,17 +117,33 @@ export function Backtest({
 
   useEffect(() => {
     api.strategies().then(setStrategies).catch(() => setStrategies([]));
-    refreshHistory();
   }, [version]);
 
-  async function refreshHistory() {
-    setHistoryLoading(true);
-    try {
-      setRuns(await api.runs());
+  const refreshHistory = useCallback(() => {
+    historyRequest.current?.abort();
+    const request = new AbortController();
+    historyRequest.current = request;
+    return api.runs(request.signal).then((saved) => {
+      if (request.signal.aborted) return;
+      setRuns(saved);
       setHistoryError(null);
-    } catch (err) {
-      setHistoryError(err instanceof Error ? err.message : String(err));
-    } finally { setHistoryLoading(false); }
+    }, (err: unknown) => {
+      if (!request.signal.aborted) {
+        setHistoryError(err instanceof Error ? err.message : String(err));
+      }
+    }).finally(() => {
+      if (!request.signal.aborted) setHistoryLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    void refreshHistory();
+    return () => historyRequest.current?.abort();
+  }, [historyVersion, refreshHistory, version]);
+
+  function refreshHistoryAfterAction() {
+    setHistoryLoading(true);
+    return refreshHistory();
   }
 
   async function openRun(id: string) {
@@ -155,7 +174,7 @@ export function Backtest({
       const saved = await api.moveRun(result.id, project);
       setResult(saved);
       setProject(saved.project);
-      await refreshHistory();
+      await refreshHistoryAfterAction();
     } catch (err) {
       setHistoryError(err instanceof Error ? err.message : String(err));
     } finally { setOpening(false); }
@@ -176,7 +195,7 @@ export function Backtest({
   async function deleteRuns(ids: string[]) {
     const outcome = await api.deleteRuns(ids);
     if (result && outcome.deleted.includes(result.id)) newRun();
-    await refreshHistory();
+    await refreshHistoryAfterAction();
     if (outcome.failed.length) {
       throw new Error(`Deleted ${outcome.deleted.length} runs. ${outcome.failed.length} could not be deleted: ${outcome.failed[0].error}`);
     }
@@ -214,14 +233,14 @@ export function Backtest({
       setResult(null);
     } finally {
       setBusy(false);
-      refreshHistory();
+      refreshHistoryAfterAction();
     }
   }
 
   return (
     <div className="chat-scrollbars grid h-full min-h-0 grid-cols-[15rem_minmax(0,1fr)]">
       <BacktestHistory runs={runs} selected={result?.id} disabled={busy || opening} loading={historyLoading}
-        error={historyError} onOpen={openRun} onNew={newRun} onRetry={refreshHistory} onDelete={deleteRuns} />
+        error={historyError} onOpen={openRun} onNew={newRun} onRetry={refreshHistoryAfterAction} onDelete={deleteRuns} />
       <div className="grid min-h-0 gap-4 overflow-auto p-4 xl:grid-cols-[minmax(360px,42%)_minmax(0,1fr)]">
       <form onSubmit={submit} className="grid min-h-0 grid-rows-[1fr_auto] gap-4">
         <Card className="flex min-h-[28rem] flex-col overflow-hidden py-0">
