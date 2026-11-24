@@ -132,6 +132,10 @@ binds to loopback by default, and Compose publishes the application and OAuth ca
 on host loopback. For remote browser access, use the [HTTPS overlay](#enable-network-access),
 which requires a password for the UI, API, and reports.
 
+**Backtest reports.** Both the Backtest screen and direct report URLs display generated
+HTML in a sandboxed frame with its own browser origin. The report can run its bundled charts.
+The browser blocks network requests and downloads from the report frame.
+
 **Why `seccomp=unconfined`.** bubblewrap builds the sandbox from a user namespace, and Docker's
 default seccomp profile blocks `clone(CLONE_NEWUSER)`. Without the override the sandbox cannot
 start at all, and the API returns an error that says so. This loosens the *container's* syscall
@@ -459,9 +463,6 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 - **One backtest at a time per request.** Runs are synchronous, with no queue.
 - **Stats are scalars only.** Equity curves and trade lists are in the HTML report, not in the
   API response.
-- **Reports are served from the API's origin.** `report.html` is written into the run's
-  writable `/out` directory and shown in an iframe without a `sandbox` attribute. Treat reports
-  from strategies you have not read with the same caution as the strategies themselves.
 - **Contract sizing is FX-only in backtests.** The runner currently uses the engine's
   100,000-unit contract default. Gold and index candles can be downloaded, but meaningful
   backtests require instrument-specific contract sizing, which is not exposed yet.

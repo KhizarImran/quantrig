@@ -1,5 +1,5 @@
 //! Durable run records live outside the directory writable by strategy code.
-use crate::{sandbox, store};
+use crate::{report, sandbox, store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{error::Error, path::PathBuf};
@@ -56,11 +56,13 @@ pub fn load(id: &str) -> Result<Run> {
     if !valid_id(id) { return Err("bad run id".into()); }
     let path = history_dir().join(format!("{id}.json"));
     if path.exists() {
-        return Ok(serde_json::from_slice(&std::fs::read(path)?)?);
+        let mut run: Run = serde_json::from_slice(&std::fs::read(path)?)?;
+        run.report_available = run.report_available && report::available(id);
+        return Ok(run);
     }
     // Older manual runs retained source/report but never saved settings or stats.
     let dir = store::runs_dir().join(id);
-    if !dir.join("report.html").is_file() { return Err("no such backtest".into()); }
+    if !report::available(id) { return Err("no such backtest".into()); }
     Ok(Run {
         id: id.into(), project: "Ungrouped".into(), strategy: "Archived strategy".into(),
         dataset: String::new(), created: id.parse::<u128>().unwrap_or(0).checked_div(1_000_000).unwrap_or(0) as u64,
@@ -78,7 +80,7 @@ pub fn list() -> Vec<Value> {
     }
     for entry in std::fs::read_dir(store::runs_dir()).into_iter().flatten().flatten() {
         let id = entry.file_name().to_string_lossy().to_string();
-        if valid_id(&id) && entry.path().join("report.html").is_file() { ids.insert(id); }
+        if valid_id(&id) { ids.insert(id); }
     }
     let mut runs: Vec<_> = ids.into_iter().filter_map(|id| load(&id).ok()).map(|run| json!({
         "id": run.id, "project": run.project, "strategy": run.strategy,
@@ -153,11 +155,12 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
     let outcome = sandbox::run_backtest(&strategy_path, &candles, &dir, &runner_config.to_string())
         .and_then(|raw| Ok(serde_json::from_str::<Value>(&raw)?));
     let (stats, error) = match outcome { Ok(stats) => (Some(stats), None), Err(e) => (None, Some(e.to_string())) };
+    let report_available = report::available(&id);
     let run = Run {
         created: id.parse::<u128>()?.checked_div(1_000_000).unwrap_or(0) as u64,
         id, project, strategy: if strategy.trim().is_empty() { "Untitled strategy".into() } else { strategy },
         dataset, source: source.into(), code, config: Some(config), stats, error,
-        report_available: dir.join("report.html").is_file(),
+        report_available,
     };
     save(&run)?;
     Ok(run)

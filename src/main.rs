@@ -5,13 +5,13 @@ mod agent;
 mod backtests;
 mod chatgpt;
 mod fetcher;
+mod report;
 mod sandbox;
 mod store;
 
 use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -333,16 +333,6 @@ async fn chatgpt_disconnect() -> Result<Json<Value>, ApiError> {
     chatgpt::disconnect().await.map(Json).map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
-async fn report(UrlPath(id): UrlPath<String>) -> Result<Html<String>, ApiError> {
-    // Run ids are our own nanosecond timestamps; anything else is a traversal attempt.
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
-        return Err(bad(StatusCode::BAD_REQUEST, "bad run id"));
-    }
-    std::fs::read_to_string(store::runs_dir().join(id).join("report.html"))
-        .map(Html)
-        .map_err(|e| bad(StatusCode::NOT_FOUND, e))
-}
-
 #[tokio::main]
 async fn main() {
     chatgpt::listen().await;
@@ -370,7 +360,7 @@ async fn main() {
         )
         .route("/api/models", get(models))
         .route("/api/chat", post(chat))
-        .route("/report/{id}", get(report))
+        .route("/report/{id}", get(report::show))
         .fallback_service(spa);
 
     // ponytail: loopback only, no auth yet. Password gate before this leaves localhost.
