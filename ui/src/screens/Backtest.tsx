@@ -51,6 +51,10 @@ function Sign({ polarity }: { polarity: "good" | "bad" | null }) {
 const tone = (p: "good" | "bad" | null) =>
   p === "good" ? "text-emerald-600 dark:text-emerald-500" : p === "bad" ? "text-destructive" : "";
 
+type DatasetSelection =
+  | { kind: "latest"; name: string }
+  | { kind: "saved"; run: Pick<SavedRun, "id" | "dataset" | "candle_revision" | "instrument"> };
+
 function Summary({ result, currency }: { result: RunResult; currency: "USD" | null }) {
   const heroPolarity = polarityOf(HERO, result.stats[HERO]);
   return (
@@ -95,7 +99,7 @@ export function Backtest({
   const [code, setCode] = useState(EXAMPLE);
   const [strategies, setStrategies] = useState<string[]>([]);
   const [strategy, setStrategy] = useState("");
-  const [dataset, setDataset] = useState("");
+  const [dataset, setDataset] = useState<DatasetSelection>({ kind: "latest", name: "" });
   const [cash, setCash] = useState("10000");
   const [spread, setSpread] = useState("0.0001");
   const [commission, setCommission] = useState("0");
@@ -111,9 +115,17 @@ export function Backtest({
   const [busy, setBusy] = useState(false);
 
   const firstSupported = datasets.find((d) => d.backtest_instrument);
-  const selected = dataset || firstSupported?.name || "";
+  const savedInput = dataset.kind === "saved" ? dataset.run : null;
+  const selected = dataset.kind === "saved" ? dataset.run.dataset : dataset.name || firstSupported?.name || "";
   const selectedDataset = datasets.find((d) => d.name === selected);
-  const canRun = Boolean(selectedDataset?.backtest_instrument);
+  const canRun = savedInput
+    ? Boolean(savedInput.candle_revision && (savedInput.instrument ?? selectedDataset?.backtest_instrument))
+    : Boolean(selectedDataset?.backtest_instrument);
+
+  function selectLatest(name: string) {
+    setDataset({ kind: "latest", name });
+    setError(null);
+  }
 
   useEffect(() => {
     api.strategies().then(setStrategies).catch(() => setStrategies([]));
@@ -155,7 +167,7 @@ export function Backtest({
       setProject(saved.project);
       setRunLabel(saved.strategy);
       setStrategy("");
-      setDataset(saved.dataset);
+      setDataset({ kind: "saved", run: saved });
       if (saved.config) {
         setCash(String(saved.config.cash));
         setSpread(String(saved.config.spread));
@@ -185,7 +197,7 @@ export function Backtest({
     setError(null);
     setCode(EXAMPLE);
     setStrategy("");
-    setDataset("");
+    setDataset({ kind: "latest", name: "" });
     setRunLabel("SMA crossover");
     setCash("10000");
     setSpread("0.0001");
@@ -217,20 +229,21 @@ export function Backtest({
     setBusy(true);
     setError(null);
     try {
-      setResult(
-        await api.run({
-          code,
-          dataset: selected,
-          cash: Number(cash),
-          spread: Number(spread),
-          commission: Number(commission),
-          project,
-          strategy: runLabel,
-        }),
-      );
+      const run = await api.run({
+        code,
+        dataset: selected,
+        rerun_of: savedInput?.id,
+        cash: Number(cash),
+        spread: Number(spread),
+        commission: Number(commission),
+        project,
+        strategy: runLabel,
+      });
+      setResult(run);
+      setDataset({ kind: "saved", run });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setResult(null);
+      if (!savedInput) setResult(null);
     } finally {
       setBusy(false);
       refreshHistoryAfterAction();
@@ -285,8 +298,17 @@ export function Backtest({
 
         <Card>
           <CardContent className="flex flex-wrap items-end gap-3">
-            {!firstSupported && <Alert><AlertDescription>Download a supported FX dataset, such as EUR/USD, to run a backtest.<Button type="button" size="sm" variant="outline" onClick={onNeedData}>Go to Data</Button></AlertDescription></Alert>}
-            {firstSupported && selected && !canRun && (
+            {!firstSupported && !canRun && <Alert><AlertDescription>Download a supported FX dataset, such as EUR/USD, to run a backtest.<Button type="button" size="sm" variant="outline" onClick={onNeedData}>Go to Data</Button></AlertDescription></Alert>}
+            {savedInput && (
+              <Alert><AlertDescription>
+                {savedInput.candle_revision
+                  ? "Running again uses the saved candle revision."
+                  : "The original candle revision is unavailable for this saved run."}
+                {selectedDataset?.backtest_instrument && <Button type="button" size="sm" variant="outline" disabled={busy || opening}
+                  onClick={() => selectLatest(selected)}>Use latest candles</Button>}
+              </AlertDescription></Alert>
+            )}
+            {!savedInput && firstSupported && selected && !canRun && (
               <Alert><AlertDescription>
                 {selectedDataset
                   ? "This dataset needs verified contract sizing or currency conversion. Choose a supported dataset to run again."
@@ -294,9 +316,9 @@ export function Backtest({
               </AlertDescription></Alert>
             )}
             <div className="min-w-48 flex-[2] space-y-2">
-              <Label>Dataset</Label>
-              <Select value={selected} onValueChange={(v) => v && setDataset(v)}>
-                <SelectTrigger className="w-full font-mono">
+              <Label htmlFor="backtest-dataset">Dataset</Label>
+              <Select value={selected} disabled={busy || opening} onValueChange={(v) => v && selectLatest(v)}>
+                <SelectTrigger id="backtest-dataset" className="w-full font-mono">
                   <SelectValue placeholder="Choose a dataset" />
                 </SelectTrigger>
                 <SelectContent>
@@ -337,6 +359,10 @@ export function Backtest({
         {result && <div className="border-b px-4 py-3 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">{result.project} / {result.strategy}</p>
           <p className="mt-1">{result.dataset || "Archived report"} · {new Date(result.created).toLocaleString()} · {result.source === "agent" ? "Chat run" : "Saved run"}</p>
+          {result.candle_revision && <p className="mt-1">
+            Candle span {result.candle_revision.start.slice(0, 10)} to {result.candle_revision.end.slice(0, 10)} ·{" "}
+            {result.candle_revision.rows.toLocaleString()} bars
+          </p>}
           <p className="mt-1">{result.instrument ? (
             <>
               {result.instrument.contract_size.toLocaleString()} {result.instrument.base_currency} per lot ·{" "}

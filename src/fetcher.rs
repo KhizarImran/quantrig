@@ -1,7 +1,7 @@
 //! Calls London Strategic Edge. This side of the boundary holds the API key and
 //! is allowed on the network — which is exactly why no strategy code runs here.
 
-use crate::store;
+use crate::{candles::Summary, store};
 use std::error::Error;
 use std::path::Path;
 use std::process::Command;
@@ -14,12 +14,17 @@ fn root() -> std::path::PathBuf {
 
 fn run(args: &[&str]) -> Result<String, Box<dyn Error>> {
     let key = store::lse_key().ok_or("no London Strategic Edge API key set — add one in Settings")?;
+    invoke(args, Some(&key))
+}
+
+fn invoke(args: &[&str], key: Option<&str>) -> Result<String, Box<dyn Error>> {
     let python = format!("{}/bin/python3", crate::sandbox::python_prefix());
-    let out = Command::new(python)
-        .arg(root().join("fetcher/fetch.py"))
-        .args(args)
-        .env("LSE_API_KEY", key)
-        .output()?;
+    let mut command = Command::new(python);
+    command.arg(root().join("fetcher/fetch.py")).args(args);
+    if let Some(key) = key {
+        command.env("LSE_API_KEY", key);
+    }
+    let out = command.output()?;
     if !out.status.success() {
         // Log the whole thing: with retries the last line hides the earlier
         // attempts, and `docker compose logs` is where this gets diagnosed.
@@ -56,8 +61,14 @@ pub fn download(
     start: &str,
     end: &str,
     out: &Path,
-) -> Result<String, Box<dyn Error>> {
-    run(&["download", symbol, timeframe, start, end, out.to_str().unwrap()])
+) -> Result<Summary, Box<dyn Error>> {
+    let raw = run(&["download", symbol, timeframe, start, end, out.to_str().ok_or("bad candles path")?])?;
+    Ok(serde_json::from_str(&raw)?)
+}
+
+pub fn inspect(path: &Path) -> Result<Summary, Box<dyn Error>> {
+    let raw = invoke(&["inspect", path.to_str().ok_or("bad candles path")?], None)?;
+    Ok(serde_json::from_str(&raw)?)
 }
 
 #[cfg(test)]

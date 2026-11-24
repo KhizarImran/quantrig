@@ -47,7 +47,9 @@ list_backtests and read_backtest to inspect saved runs, including manual runs. \
 Do not rerun strategies merely to retrieve existing results. read_backtest returns \
 summary metrics by default; request code: \"yes\" only when inspecting the original strategy source is necessary. Older archived runs \
 may lack saved statistics, settings or instrument terms. Treat currency and sizing as \
-unverified when instrument terms are missing.";
+unverified when instrument terms are missing. To rerun a saved backtest, pass its ID as \
+rerun_of to use its exact candle revision. If the original data is unavailable, explain \
+the failure and ask before running with the latest candles.";
 
 fn tools() -> Value {
     json!([
@@ -92,6 +94,7 @@ fn tools() -> Value {
         "parameters": {"type": "object", "required": ["strategy", "dataset"], "properties": {
           "strategy": {"type": "string"},
           "dataset": {"type": "string", "description": "e.g. EUR_USD@1h"},
+          "rerun_of": {"type": "string", "description": "Saved run ID. Required to rerun on its original candle revision."},
           "project": {"type": "string", "description": "Strategy family/project, e.g. Martingale. Reuse across pairs and timeframes."},
           "cash": {"type": "number", "default": 10000},
           "spread": {"type": "number", "default": 0.0001},
@@ -119,20 +122,16 @@ fn call_tool(name: &str, args: &Value) -> String {
                     .and_then(|stats| stats.get(key)).cloned().unwrap_or(Value::Null))).collect();
                 let mut result = json!({"id": run.id, "project": run.project,
                     "strategy": run.strategy, "dataset": run.dataset,
-                    "instrument": run.instrument, "stats": metrics, "error": run.error});
+                    "instrument": run.instrument, "candle_revision": run.candle_revision, "stats": metrics, "error": run.error});
                 if s("code") == "yes" { result["code"] = json!(run.code); }
                 result.to_string()
             },
             Err(e) => format!("error: {e}"),
         },
         "list_datasets" => {
-            let names: Vec<String> = std::fs::read_dir(store::candles_dir())
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "parquet"))
-                .filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().to_string()))
-                .filter(|name| backtests::instrument_for(name).is_ok())
+            let names: Vec<String> = crate::candles::list().into_iter()
+                .filter(|dataset| backtests::instrument_for(&dataset.name).is_ok())
+                .map(|dataset| dataset.name)
                 .collect();
             json!(names).to_string()
         }
@@ -160,16 +159,19 @@ fn call_tool(name: &str, args: &Value) -> String {
             else {
                 return "error: no such strategy — write it first".into();
             };
-            let Some(_candles) = store::dataset_path(&s("dataset")).filter(|p| p.exists()) else {
-                return "error: no such dataset — call list_datasets".into();
+            let rerun_of = match args.get("rerun_of") {
+                None => None,
+                Some(Value::String(id)) if backtests::valid_id(id) => Some(id.clone()),
+                Some(_) => return "error: rerun_of must be a saved backtest ID".into(),
             };
             let code = match std::fs::read_to_string(strategy) {
                 Ok(code) => code,
                 Err(e) => return format!("error: {e}"),
             };
-            match backtests::execute(code, s("strategy"), s("dataset"), s("project"),
+            let dataset = backtests::DatasetRequest { name: s("dataset"), rerun_of };
+            match backtests::execute(code, s("strategy"), dataset, s("project"),
                 backtests::Config { cash: n("cash", 10000.0), spread: n("spread", 0.0001), commission: n("commission", 0.0) }, "agent") {
-                Ok(run) => json!({"id": run.id, "project": run.project, "instrument": run.instrument, "stats": run.stats, "error": run.error}).to_string(),
+                Ok(run) => json!({"id": run.id, "project": run.project, "instrument": run.instrument, "candle_revision": run.candle_revision, "stats": run.stats, "error": run.error}).to_string(),
                 Err(e) if e.is::<backtests::AtCapacity>() => format!("backtest capacity reached: {e}"),
                 Err(e) => format!("the strategy failed: {e}"),
             }
@@ -695,6 +697,7 @@ mod tests {
         assert_eq!(list[0]["return_pct"], 12.5);
         let read: Value = serde_json::from_str(&call_tool("read_backtest", &json!({"id": "123"}))).unwrap();
         assert!(read["instrument"].is_null());
+        assert!(read["candle_revision"].is_null());
         assert_eq!(read["stats"]["total_return_pct"], 12.5);
         assert_eq!(read["stats"].as_object().unwrap().len(), 10);
         assert!(read["stats"]["final_cash"].is_null());
@@ -774,6 +777,10 @@ pd.DataFrame(
             "read_backtest", &json!({"id": output["id"]}),
         )).unwrap();
         assert_eq!(saved["instrument"], output["instrument"]);
+        assert_eq!(saved["candle_revision"], output["candle_revision"]);
+        assert_eq!(saved["candle_revision"]["rows"], 8);
+        assert_eq!(saved["candle_revision"]["start"], "2024-01-01T00:00:00");
+        assert_eq!(saved["candle_revision"]["end"], "2024-01-01T07:00:00");
         assert_eq!(saved["stats"]["final_cash"], output["stats"]["final_cash"]);
         std::fs::remove_dir_all(&dir).unwrap();
         unsafe { std::env::remove_var("QUANTRIG_DATA") };
