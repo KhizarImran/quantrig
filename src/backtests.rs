@@ -1,5 +1,5 @@
 //! Durable run records live outside the directory writable by strategy code.
-use crate::{report, sandbox, store};
+use crate::{candles, report, sandbox, store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{error::Error, fmt, path::PathBuf, sync::{Mutex, TryLockError}};
@@ -24,6 +24,11 @@ pub struct Config {
     pub cash: f64,
     pub spread: f64,
     pub commission: f64,
+}
+
+pub struct DatasetRequest {
+    pub name: String,
+    pub rerun_of: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -73,6 +78,8 @@ pub struct Run {
     pub project: String,
     pub strategy: String,
     pub dataset: String,
+    #[serde(default)]
+    pub candle_revision: Option<candles::Revision>,
     pub created: u64,
     pub source: String,
     pub code: String,
@@ -121,7 +128,7 @@ pub fn load(id: &str) -> Result<Run> {
     if !report::available(id) { return Err("no such backtest".into()); }
     Ok(Run {
         id: id.into(), project: "Ungrouped".into(), strategy: "Archived strategy".into(),
-        dataset: String::new(), created: id.parse::<u128>().unwrap_or(0).checked_div(1_000_000).unwrap_or(0) as u64,
+        dataset: String::new(), candle_revision: None, created: id.parse::<u128>().unwrap_or(0).checked_div(1_000_000).unwrap_or(0) as u64,
         source: "legacy".into(), code: std::fs::read_to_string(dir.join("strategy.py"))?,
         config: None, instrument: None, stats: None, error: None, report_available: true,
     })
@@ -188,18 +195,32 @@ pub fn delete_many(ids: Vec<String>) -> Result<Value> {
     Ok(json!({"deleted": deleted, "failed": failed}))
 }
 
-pub fn execute(code: String, strategy: String, dataset: String, project: String, config: Config, source: &str) -> Result<Run> {
+pub fn execute(code: String, strategy: String, dataset: DatasetRequest, project: String, config: Config, source: &str) -> Result<Run> {
     let project = project_name(&project)?;
     if !config.cash.is_finite() || config.cash <= 0.0 || !config.spread.is_finite()
         || config.spread < 0.0 || !config.commission.is_finite() || config.commission < 0.0 {
         return Err("cash must be positive; spread and commission must be non-negative finite numbers".into());
     }
-    let candles = store::dataset_path(&dataset).filter(|p| p.is_file()).ok_or("unknown dataset — download it first")?;
+    let DatasetRequest { name: dataset, rerun_of } = dataset;
+    let original = if let Some(id) = rerun_of {
+        let saved = load(&id).map_err(|_| "the original backtest is unavailable")?;
+        let revision = saved.candle_revision.ok_or("original candle data is unavailable. This run did not record a candle revision.")?;
+        if saved.dataset != dataset {
+            return Err("the requested dataset does not match the original backtest".into());
+        }
+        Some(revision)
+    } else {
+        None
+    };
     let instrument = instrument_for(&dataset)?;
     let _slot = match RUN_SLOT.try_lock() {
         Ok(slot) => slot,
         Err(TryLockError::Poisoned(error)) => error.into_inner(),
         Err(TryLockError::WouldBlock) => return Err(AtCapacity.into()),
+    };
+    let candles = match original {
+        Some(revision) => candles::restore(&dataset, &revision)?,
+        None => candles::latest_for_run(&dataset)?,
     };
     let (id, dir) = loop {
         let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos().to_string();
@@ -221,14 +242,14 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
         "quote_to_account": instrument.quote_to_account,
         "plot": true,
     });
-    let outcome = sandbox::run_backtest(&strategy_path, &candles, &dir, &runner_config.to_string())
+    let outcome = sandbox::run_backtest(&strategy_path, &candles.path, &dir, &runner_config.to_string())
         .and_then(|raw| Ok(serde_json::from_str::<Value>(&raw)?));
     let (stats, error) = match outcome { Ok(stats) => (Some(stats), None), Err(e) => (None, Some(e.to_string())) };
     let report_available = report::available(&id);
     let run = Run {
         created: id.parse::<u128>()?.checked_div(1_000_000).unwrap_or(0) as u64,
         id, project, strategy: if strategy.trim().is_empty() { "Untitled strategy".into() } else { strategy },
-        dataset, source: source.into(), code, config: Some(config), instrument: Some(instrument), stats, error,
+        dataset, candle_revision: Some(candles.revision), source: source.into(), code, config: Some(config), instrument: Some(instrument), stats, error,
         report_available,
     };
     save(&run)?;
@@ -266,7 +287,7 @@ mod tests {
 
         let original = Run {
             id: "1000000".into(), project: "Martingale".into(), strategy: "Martingale v1".into(),
-            dataset: "EUR_USD@1h".into(), created: 1, source: "agent".into(),
+            dataset: "EUR_USD@1h".into(), candle_revision: None, created: 1, source: "agent".into(),
             code: "# original source".into(), config: Some(Config { cash: 5000.0, spread: 0.001, commission: 0.1 }),
             instrument: None, stats: Some(json!({"total_return_pct": 12.5})), error: None, report_available: true,
         };
@@ -309,7 +330,7 @@ mod tests {
         assert_eq!(project_name(" ").unwrap(), "Ungrouped");
         assert!(project_name("bad\nname").is_err());
         assert!(project_name(&"x".repeat(81)).is_err());
-        assert!(execute(String::new(), String::new(), "EUR_USD@1h".into(), "Martingale".into(),
+        assert!(execute(String::new(), String::new(), DatasetRequest { name: "EUR_USD@1h".into(), rerun_of: None }, "Martingale".into(),
             Config { cash: -1.0, spread: 0.0, commission: 0.0 }, "manual").is_err());
 
         assert!(delete_many(vec![original.id.clone(), "../settings".into()]).is_err());

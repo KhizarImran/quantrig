@@ -3,6 +3,7 @@
 
 mod agent;
 mod backtests;
+mod candles;
 mod chatgpt;
 mod fetcher;
 mod report;
@@ -91,31 +92,20 @@ async fn pairs(Query(query): Query<CatalogQuery>) -> Result<Json<Value>, ApiErro
     Ok(Json(serde_json::from_str(&raw).map_err(|e| bad(StatusCode::BAD_GATEWAY, e))?))
 }
 
-/// Datasets already on disk, newest first.
+/// Latest published revision of each dataset, plus older flat-file datasets.
 async fn list_datasets() -> Json<Value> {
-    let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(store::candles_dir()) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "parquet") {
-                continue;
-            }
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            let meta = std::fs::read_to_string(path.with_extension("json"))
-                .ok()
-                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                .unwrap_or_else(|| json!({}));
-            out.push(json!({
-                "name": name,
-                "bytes": entry.metadata().map(|m| m.len()).unwrap_or(0),
-                "rows": meta.get("rows").cloned().unwrap_or(Value::Null),
-                "start": meta.get("start").cloned().unwrap_or(Value::Null),
-                "end": meta.get("end").cloned().unwrap_or(Value::Null),
-                "backtest_instrument": backtests::instrument_for(&name).ok(),
-            }));
-        }
-    }
-    Json(Value::Array(out))
+    Json(Value::Array(candles::list().into_iter().map(|dataset| {
+        let summary = dataset.summary.as_ref();
+        json!({
+            "name": dataset.name,
+            "bytes": dataset.bytes,
+            "rows": summary.map(|value| value.rows),
+            "start": summary.map(|value| &value.start),
+            "end": summary.map(|value| &value.end),
+            "revision": dataset.revision,
+            "backtest_instrument": backtests::instrument_for(&dataset.name).ok(),
+        })
+    }).collect()))
 }
 
 #[derive(Deserialize)]
@@ -131,27 +121,20 @@ struct DownloadRequest {
 async fn download(Json(req): Json<DownloadRequest>) -> Result<Json<Value>, ApiError> {
     require_key()?;
     let name = store::dataset_name(&req.symbol, &req.timeframe);
-    let path = store::dataset_path(&name)
-        .ok_or_else(|| bad(StatusCode::BAD_REQUEST, "bad symbol or timeframe"))?;
-    std::fs::create_dir_all(store::candles_dir())
-        .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let summary = {
-        let path = path.clone();
-        tokio::task::spawn_blocking(move || {
-            fetcher::download(&req.symbol, &req.timeframe, &req.start, &req.end, &path)
-                .map_err(|e| e.to_string())
+    if !store::is_safe_name(&name) {
+        return Err(bad(StatusCode::BAD_REQUEST, "bad symbol or timeframe"));
+    }
+    let dataset = name.clone();
+    let revision = tokio::task::spawn_blocking(move || {
+        candles::publish(&dataset, |path| {
+            fetcher::download(&req.symbol, &req.timeframe, &req.start, &req.end, path)
         })
-        .await
-        .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?
-        .map_err(|e| bad(StatusCode::BAD_GATEWAY, e))?
-    };
-
-    // Sidecar so the dataset list can show span and row count without opening parquet.
-    let _ = std::fs::write(path.with_extension("json"), &summary);
-    let summary: Value =
-        serde_json::from_str(&summary).map_err(|e| bad(StatusCode::BAD_GATEWAY, e))?;
-    Ok(Json(json!({ "name": name, "summary": summary })))
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    .map_err(|e| bad(StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(json!({ "name": name, "revision": revision.id, "summary": revision.summary })))
 }
 
 // ---- backtests ----
@@ -160,6 +143,7 @@ async fn download(Json(req): Json<DownloadRequest>) -> Result<Json<Value>, ApiEr
 struct RunRequest {
     code: String,
     dataset: String,
+    rerun_of: Option<String>,
     cash: f64,
     spread: f64,
     commission: f64,
@@ -171,7 +155,7 @@ struct RunRequest {
 
 async fn run(Json(req): Json<RunRequest>) -> Result<Json<Value>, ApiError> {
     let run = tokio::task::spawn_blocking(move || {
-        backtests::execute(req.code, req.strategy, req.dataset, req.project,
+        backtests::execute(req.code, req.strategy, backtests::DatasetRequest { name: req.dataset, rerun_of: req.rerun_of }, req.project,
             backtests::Config { cash: req.cash, spread: req.spread, commission: req.commission }, "manual")
             .map_err(|error| {
                 let status = if error.is::<backtests::AtCapacity>() {

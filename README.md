@@ -71,8 +71,8 @@ clients of the same API.
 **Downloading data.** On the Data screen the browser calls `POST /api/datasets`. The API
 spawns `fetcher/fetch.py download …` with `LSE_API_KEY` in its environment. The fetcher pages
 the candles endpoint 5,000 bars at a time, retrying transient failures. It normalises the
-result to an OHLCV frame, writes `data/candles/<PAIR>@<tf>.parquet`, and prints a summary. The
-API saves that summary as a `.json` sidecar next to the parquet file.
+result to an OHLCV frame and writes Parquet with a row count and date span. The API publishes
+the file and summary together as a new revision. Earlier revisions remain available to backtests.
 
 **Running a backtest.** On the Backtest screen, `POST /api/run` sends the strategy source. The
 API writes it to `data/runs/<id>/strategy.py` and launches `bwrap`. Inside the sandbox the
@@ -224,8 +224,10 @@ The UI has four screens.
    choose or type a **Project** (for example Martingale). Use the same project for different
    pairs, timeframes and strategy variants. Choose a dataset, cash, spread and commission
    and run it. The sidebar saves completed and failed runs, newest first within each project.
-   Click a run to reopen its exact source, settings, summary stats and HTML report; running
-   it again creates a separate entry. **Move saved run to this project** changes its group.
+   Click a run to reopen its source, settings, candle span, stats, and HTML report. Running
+   it again uses its saved candle revision and creates a separate entry. **Use latest candles**
+   starts a run with the current dataset instead. Older reports without a recorded revision
+   stay readable. **Move saved run to this project** changes its group.
    Runs from Chat also appear here; the agent can supply the project name. Blank projects
    go into **Ungrouped**. Older manual reports appear there too, but their original settings,
    dataset and summary stats were not persisted. Historical agent runs from before this
@@ -372,8 +374,10 @@ data/
 ├── chatgpt.json               # ChatGPT identity, OAuth tokens and stable host ID, mode 0600
 ├── instruments.json           # cached LSE FX, commodity and index catalogue
 ├── candles/
-│   ├── EUR_USD@1h.parquet     # OHLCV candles
-│   └── EUR_USD@1h.json        # rows / start / end sidecar
+│   ├── revisions/EUR_USD@1h/<revision>/
+│   │   ├── candles.parquet   # immutable OHLCV candles
+│   │   └── summary.json      # actual row count and date span
+│   └── EUR_USD@1h.parquet    # legacy flat files, imported on first use
 ├── strategies/*.py            # strategies saved by you or the agent
 ├── backtests/<id>.json        # project, source, settings, stats/error for each run
 ├── runs/<id>/                # strategy.py and report.html for manual and agent runs
@@ -381,6 +385,8 @@ data/
 ```
 
 Back up or delete this directory to keep or reset all state. It contains your API keys.
+Downloads add revisions, and deleting a run keeps its candles. Back up the revision directories
+with run history if you need to reproduce previous results.
 
 ## HTTP API
 
@@ -393,10 +399,10 @@ All routes are defined in [`src/main.rs`](src/main.rs). Errors are returned as
 | `PUT` | `/api/settings` | Set `lse_api_key` and/or `opencode_api_key`. |
 | `GET` | `/api/pairs` | FX, commodity and index catalogue, cached on disk. `?refresh=true` fetches it again. |
 | `GET` | `/api/datasets` | Downloaded datasets with row count and span. `backtest_instrument` describes the verified terms or is `null` for unsupported datasets. |
-| `POST` | `/api/datasets` | Download candles: `{symbol, timeframe, start?, end?}`. |
-| `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission, project?, strategy?}` and return the saved run. Execution failures remain in history. Returns `429` when a backtest is already running. |
+| `POST` | `/api/datasets` | Download `{symbol, timeframe, start?, end?}` and return the published revision and summary. |
+| `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission, project?, strategy?, rerun_of?}`. Pass a saved run ID as `rerun_of` to use its candle revision. Execution failures remain in history. Returns `429` when a backtest is already running. |
 | `GET` | `/api/runs` | Backtest summaries, newest first, including project, strategy, dataset and status. |
-| `GET` | `/api/runs/{id}` | Full saved run with source, settings, instrument terms, results and report availability. Older runs may have `instrument: null`. |
+| `GET` | `/api/runs/{id}` | Full saved run with source, settings, instrument terms, candle revision and date span, results, and report availability. Older runs may omit instrument or revision information. |
 | `PUT` | `/api/runs/{id}` | Move a saved run to `{project}`. |
 | `DELETE` | `/api/runs/{id}` | Delete one run's metadata and artifacts. Returns `{deleted, failed}`. |
 | `DELETE` | `/api/runs` | Delete the explicitly confirmed `{ids: [...]}`. Returns `{deleted, failed}`; new runs outside that snapshot are kept. |
