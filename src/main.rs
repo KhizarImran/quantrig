@@ -172,11 +172,17 @@ async fn run(Json(req): Json<RunRequest>) -> Result<Json<Value>, ApiError> {
     let run = tokio::task::spawn_blocking(move || {
         backtests::execute(req.code, req.strategy, req.dataset, req.project,
             backtests::Config { cash: req.cash, spread: req.spread, commission: req.commission }, "manual")
-            .map_err(|e| e.to_string())
+            .map_err(|error| {
+                let status = if error.is::<backtests::AtCapacity>() {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    StatusCode::BAD_REQUEST
+                };
+                bad(status, error)
+            })
     })
     .await
-    .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?
-    .map_err(|e| bad(StatusCode::BAD_REQUEST, e))?;
+    .map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))??;
 
     if let Some(error) = &run.error { return Err(bad(StatusCode::BAD_REQUEST, error)); }
     Ok(Json(serde_json::to_value(run).map_err(|e| bad(StatusCode::INTERNAL_SERVER_ERROR, e))?))

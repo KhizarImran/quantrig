@@ -168,6 +168,7 @@ fn call_tool(name: &str, args: &Value) -> String {
             match backtests::execute(code, s("strategy"), s("dataset"), s("project"),
                 backtests::Config { cash: n("cash", 10000.0), spread: n("spread", 0.0001), commission: n("commission", 0.0) }, "agent") {
                 Ok(run) => json!({"id": run.id, "project": run.project, "stats": run.stats, "error": run.error}).to_string(),
+                Err(e) if e.is::<backtests::AtCapacity>() => format!("backtest capacity reached: {e}"),
                 Err(e) => format!("the strategy failed: {e}"),
             }
         }
