@@ -338,6 +338,7 @@ export function Backtest({
             {result.report_available && <iframe
               src={`/report/${result.id}`}
               title="Backtest report"
+              sandbox="allow-scripts"
               className="min-h-80 flex-1 border-t bg-white"
             />}
           </>
