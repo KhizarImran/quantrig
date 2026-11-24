@@ -2,9 +2,22 @@
 use crate::{report, sandbox, store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{error::Error, path::PathBuf};
+use std::{error::Error, fmt, path::PathBuf, sync::{Mutex, TryLockError}};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+static RUN_SLOT: Mutex<()> = Mutex::new(());
+
+#[derive(Debug)]
+pub struct AtCapacity;
+
+impl fmt::Display for AtCapacity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a backtest is already running. Retry when it finishes.")
+    }
+}
+
+impl Error for AtCapacity {}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -139,6 +152,11 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
         return Err("cash must be positive; spread and commission must be non-negative finite numbers".into());
     }
     let candles = store::dataset_path(&dataset).filter(|p| p.is_file()).ok_or("unknown dataset — download it first")?;
+    let _slot = match RUN_SLOT.try_lock() {
+        Ok(slot) => slot,
+        Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(TryLockError::WouldBlock) => return Err(AtCapacity.into()),
+    };
     let (id, dir) = loop {
         let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos().to_string();
         let dir = store::runs_dir().join(&id);

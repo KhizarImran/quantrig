@@ -32,7 +32,7 @@ bt = Backtest(df, load_strategy("/q/strategy.py"),
 stats = bt.run()
 
 if cfg.get("plot"):
-    bt.plot("/out/report.html")
+    bt.plot("/out/report.html", open_browser=False)
 
 # ponytail: scalars only. equity_curve/trades when the Results screen needs them.
 FIELDS = ("initial_cash", "final_cash", "total_return_pct", "num_trades", "num_wins",

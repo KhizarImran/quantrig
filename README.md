@@ -108,8 +108,8 @@ one rule: *untrusted code never shares a process with credentials or with the ne
 **The sandbox** ([`src/sandbox.rs`](src/sandbox.rs)) runs every backtest as:
 
 - `bwrap --unshare-all --die-with-parent --clearenv`: new user, network, PID, IPC, UTS and
-  cgroup namespaces. There is no network interface, and the only environment variables are
-  `PATH`, `HOME` and `LD_LIBRARY_PATH`.
+  cgroup namespaces. The sandbox starts with a cleared environment. Quantrig sets
+  paths for Python and defaults OpenBLAS and OpenMP to one thread.
 - `/usr` and the Python prefix mounted read-only, plus a private `/tmp` and a minimal `/dev`.
   `/etc`, `/proc` and the data directory are not mounted.
 - `runner/run.py`, the strategy and the candles mounted read-only under `/q`. The run's own
@@ -117,6 +117,12 @@ one rule: *untrusted code never shares a process with credentials or with the ne
 
 Tests in the same file check each of these: that a strategy cannot open a socket, cannot see
 key-like environment variables, and cannot write outside `/out`.
+
+**Backtest limits.** Manual and agent runs share one slot. Each run has a 120-second wall
+deadline, a CPU limit of 60 seconds with a hard stop at 61, a 4 GiB address-space limit,
+and a combined 1 MiB limit for stdout and stderr. Strategy code can use library threads.
+Subprocesses are blocked. Runs that hit a limit are saved as failures. A request for an
+occupied slot returns immediately.
 
 **The fetcher** is the other side of the boundary. It sees the LSE key and the network, and
 never sees strategy code. The API passes it the key as an environment variable of that one
@@ -343,8 +349,8 @@ run the suite under `timeout`.
 
 ## Configuration
 
-The Docker image sets all of these. Outside Docker, the defaults assume you run from the
-repository root.
+The Docker image sets the container paths and listen addresses. Outside Docker, the defaults
+assume you run from the repository root.
 
 | Variable | Default outside Docker | Set in the image to | Purpose |
 | --- | --- | --- | --- |
@@ -354,6 +360,7 @@ repository root.
 | `QUANTRIG_UI` | `ui/dist` | `/app/ui/dist` | Built UI to serve. |
 | `QUANTRIG_ROOT` | the crate directory | `/app` | Where `runner/` and `fetcher/` live. |
 | `QUANTRIG_PYTHON_PREFIX` | `/usr` | `/usr/local` | Python install used for the sandbox and the fetcher (`<prefix>/bin/python3`). |
+| `QUANTRIG_BACKTEST_TIMEOUT_SECS` | `120` | Uses the default | Backtest wall deadline in whole seconds. Set a positive integer to override it. |
 
 API keys are **not** read from environment variables. They are set on the Settings screen.
 
@@ -387,7 +394,7 @@ All routes are defined in [`src/main.rs`](src/main.rs). Errors are returned as
 | `GET` | `/api/pairs` | FX, commodity and index catalogue, cached on disk. `?refresh=true` fetches it again. |
 | `GET` | `/api/datasets` | Downloaded datasets with row count and span. |
 | `POST` | `/api/datasets` | Download candles: `{symbol, timeframe, start?, end?}`. |
-| `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission, project?, strategy?}` and return the saved run. Failures return an error and remain in history. |
+| `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission, project?, strategy?}` and return the saved run. Execution failures remain in history. Returns `429` when a backtest is already running. |
 | `GET` | `/api/runs` | Backtest summaries, newest first, including project, strategy, dataset and status. |
 | `GET` | `/api/runs/{id}` | Full saved run: source, settings, stats/error and report availability. |
 | `PUT` | `/api/runs/{id}` | Move a saved run to `{project}`. |
@@ -452,15 +459,14 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 - **Live execution.** An MT5 bridge, reconciliation and kill switches, with one order-intent
   abstraction shared by backtest and live to limit semantic drift.
 - **TUI** (ratatui). Monitoring-only, for live trading on a headless VPS.
-- **Run queue and richer history.** Bounded concurrent backtests, and stored equity curves and trade lists
-  alongside the scalar stats.
+- **Run queue and richer history.** Queue runs and store equity curves and trade lists alongside the scalar stats.
 - **Template repo and published image.** The `git clone && docker compose up` distribution
   model described in DECISIONS.md.
 - **Licence.** AGPL-3.0 or BSL, before the first outside contribution.
 
 ## Known limitations
 
-- **One backtest at a time per request.** Runs are synchronous, with no queue.
+- **One backtest at a time.** Runs are synchronous and share one slot across the app.
 - **Stats are scalars only.** Equity curves and trade lists are in the HTML report, not in the
   API response.
 - **Contract sizing is FX-only in backtests.** The runner currently uses the engine's
