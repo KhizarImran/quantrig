@@ -13,6 +13,11 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [version, setVersion] = useState(0);
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  const onBacktestFinished = useCallback(() => {
+    setHistoryVersion((v) => v + 1);
+  }, []);
 
   const reload = useCallback(() => {
     api.datasets().then(setDatasets).catch(() => setDatasets([]));
@@ -50,10 +55,10 @@ export default function App() {
       <div className="min-h-0 flex-1 overflow-auto">
         {/* keepMounted: a chat streaming or a strategy half-edited survives a tab switch. */}
         <TabsContent value="chat" className="h-full" keepMounted>
-          <Chat onChanged={reload} version={version} />
+          <Chat onChanged={reload} onBacktestFinished={onBacktestFinished} version={version} />
         </TabsContent>
         <TabsContent value="backtest" className="h-full" keepMounted>
-          <Backtest datasets={datasets} onNeedData={() => setScreen("data")} version={version} />
+          <Backtest datasets={datasets} onNeedData={() => setScreen("data")} version={version} historyVersion={historyVersion} />
         </TabsContent>
         <TabsContent value="data">
           <Data datasets={datasets} reload={reload} />
