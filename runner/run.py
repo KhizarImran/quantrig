@@ -22,13 +22,14 @@ def load_strategy(path):
     return found[0]
 
 
-cfg = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+cfg = json.loads(sys.argv[1])
 df = pd.read_parquet("/q/candles.parquet")
 bt = Backtest(df, load_strategy("/q/strategy.py"),
               cash=cfg.get("cash", 10000.0),
               spread=cfg.get("spread", 0.0001),
               commission=cfg.get("commission", 0.0),
-              quote_to_account=cfg.get("quote_to_account", 1.0))
+              contract_size=cfg["contract_size"],
+              quote_to_account=cfg["quote_to_account"])
 stats = bt.run()
 
 if cfg.get("plot"):

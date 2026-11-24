@@ -15,9 +15,17 @@ export type RunSummary = {
 export type SavedRun = Omit<RunSummary, "status" | "return_pct"> & {
   code: string;
   config: { cash: number; spread: number; commission: number } | null;
+  instrument: BacktestInstrument | null;
   stats: Stats | null;
   error: string | null;
   report_available: boolean;
+};
+type BacktestInstrument = {
+  base_currency: "AUD" | "EUR" | "GBP" | "NZD";
+  quote_currency: "USD";
+  account_currency: "USD";
+  contract_size: number;
+  quote_to_account: number;
 };
 export type Pair = { symbol: string; name: string };
 export type Dataset = {
@@ -26,6 +34,7 @@ export type Dataset = {
   rows: number | null;
   start: string | null;
   end: string | null;
+  backtest_instrument: BacktestInstrument | null;
 };
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {

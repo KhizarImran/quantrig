@@ -46,7 +46,8 @@ When asked about previous backtests or to compare existing results, first use \
 list_backtests and read_backtest to inspect saved runs, including manual runs. \
 Do not rerun strategies merely to retrieve existing results. read_backtest returns \
 summary metrics by default; request code: \"yes\" only when inspecting the original strategy source is necessary. Older archived runs \
-may lack saved statistics or settings; explain missing information rather than inventing it.";
+may lack saved statistics, settings or instrument terms. Treat currency and sizing as \
+unverified when instrument terms are missing.";
 
 fn tools() -> Value {
     json!([
@@ -80,7 +81,7 @@ fn tools() -> Value {
       }},
       {"type": "function", "function": {
         "name": "read_backtest",
-        "description": "Read a saved backtest's ten summary metrics: total_return_pct, final_cash (final balance), num_trades, win_rate_pct, profit_factor, max_drawdown_pct, sharpe_ratio, avg_pnl, best_trade and worst_trade. Includes run identity and errors. Code is omitted unless code is explicitly yes. Missing archived metrics are null. Does not rerun the strategy.",
+        "description": "Read a saved backtest's ten summary metrics: total_return_pct, final_cash (final balance), num_trades, win_rate_pct, profit_factor, max_drawdown_pct, sharpe_ratio, avg_pnl, best_trade and worst_trade. Includes run identity, recorded instrument terms and errors. Code is omitted unless code is explicitly yes. Missing archived metrics and terms are null. Does not rerun the strategy.",
         "parameters": {"type": "object", "required": ["id"], "properties": {
           "id": {"type": "string", "description": "Run ID returned by list_backtests"},
           "code": {"type": "string", "enum": ["yes", "no"], "description": "Optional; only yes includes the original strategy source. Omit to save tokens."}}}
@@ -118,7 +119,7 @@ fn call_tool(name: &str, args: &Value) -> String {
                     .and_then(|stats| stats.get(key)).cloned().unwrap_or(Value::Null))).collect();
                 let mut result = json!({"id": run.id, "project": run.project,
                     "strategy": run.strategy, "dataset": run.dataset,
-                    "stats": metrics, "error": run.error});
+                    "instrument": run.instrument, "stats": metrics, "error": run.error});
                 if s("code") == "yes" { result["code"] = json!(run.code); }
                 result.to_string()
             },
@@ -131,6 +132,7 @@ fn call_tool(name: &str, args: &Value) -> String {
                 .flatten()
                 .filter(|e| e.path().extension().is_some_and(|x| x == "parquet"))
                 .filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().to_string()))
+                .filter(|name| backtests::instrument_for(name).is_ok())
                 .collect();
             json!(names).to_string()
         }
@@ -167,7 +169,7 @@ fn call_tool(name: &str, args: &Value) -> String {
             };
             match backtests::execute(code, s("strategy"), s("dataset"), s("project"),
                 backtests::Config { cash: n("cash", 10000.0), spread: n("spread", 0.0001), commission: n("commission", 0.0) }, "agent") {
-                Ok(run) => json!({"id": run.id, "project": run.project, "stats": run.stats, "error": run.error}).to_string(),
+                Ok(run) => json!({"id": run.id, "project": run.project, "instrument": run.instrument, "stats": run.stats, "error": run.error}).to_string(),
                 Err(e) if e.is::<backtests::AtCapacity>() => format!("backtest capacity reached: {e}"),
                 Err(e) => format!("the strategy failed: {e}"),
             }
@@ -692,6 +694,7 @@ mod tests {
         assert_eq!(list[0]["project"], "Martingale");
         assert_eq!(list[0]["return_pct"], 12.5);
         let read: Value = serde_json::from_str(&call_tool("read_backtest", &json!({"id": "123"}))).unwrap();
+        assert!(read["instrument"].is_null());
         assert_eq!(read["stats"]["total_return_pct"], 12.5);
         assert_eq!(read["stats"].as_object().unwrap().len(), 10);
         assert!(read["stats"]["final_cash"].is_null());
@@ -705,6 +708,73 @@ mod tests {
         assert_eq!(with_code["code"], record["code"]);
         assert_eq!(with_code["stats"], read["stats"]);
         assert!(!store::runs_dir().exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+        unsafe { std::env::remove_var("QUANTRIG_DATA") };
+    }
+
+    #[test]
+    fn agent_rejects_unverified_instruments_and_records_verified_pnl_terms() {
+        let (_guard, dir) = scratch("instrument-terms");
+        std::fs::create_dir_all(store::candles_dir()).unwrap();
+        std::fs::create_dir_all(store::strategies_dir()).unwrap();
+        let strategy = "round_trips";
+        let code = r#"from backtestingfx import Strategy
+
+class RoundTrips(Strategy):
+    def init(self):
+        self.step = 0
+
+    def next(self):
+        if self.step in (0, 3):
+            self.buy(lot_size=0.1)
+        if self.step in (2, 5):
+            self.close_all()
+        self.step += 1
+"#;
+        std::fs::write(store::strategy_path(strategy).unwrap(), code).unwrap();
+        let supported = "EUR_USD@1h";
+        let unsupported = "XAU_USD@1h";
+        let candles = store::dataset_path(supported).unwrap();
+        let result = std::process::Command::new(format!("{}/bin/python3", crate::sandbox::python_prefix()))
+            .args(["-c", r#"
+import pandas as pd
+import sys
+
+prices = [1.10, 1.10, 1.11, 1.11, 1.11, 1.105, 1.105, 1.105]
+pd.DataFrame(
+    dict(open=prices, high=prices, low=prices, close=prices, volume=0.0),
+    index=pd.date_range("2024-01-01", periods=len(prices), freq="h"),
+).to_parquet(sys.argv[1])
+"#])
+            .arg(&candles)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        std::fs::copy(candles, store::dataset_path(unsupported).unwrap()).unwrap();
+
+        let available: Value = serde_json::from_str(&call_tool("list_datasets", &json!({}))).unwrap();
+        assert_eq!(available, json!([supported]));
+        let run = |dataset| call_tool("run_backtest", &json!({
+            "strategy": strategy, "dataset": dataset, "spread": 0.0, "commission": 0.0
+        }));
+        assert!(run(unsupported).contains("unsupported backtest instrument"));
+        assert!(backtests::list().is_empty());
+
+        let output: Value = serde_json::from_str(&run(supported)).unwrap();
+        assert!(output["error"].is_null(), "{output}");
+        assert_eq!(output["stats"]["num_trades"], 2);
+        // 0.1 lots is 10,000 EUR. A 0.01 gain and a 0.005 loss net to USD 50.
+        let balance = output["stats"]["final_cash"].as_f64().unwrap();
+        assert!((balance - 10_050.0).abs() < 1e-8, "{output}");
+        assert_eq!(output["instrument"], json!({
+            "base_currency": "EUR", "quote_currency": "USD", "account_currency": "USD",
+            "contract_size": 100_000, "quote_to_account": 1.0,
+        }));
+        let saved: Value = serde_json::from_str(&call_tool(
+            "read_backtest", &json!({"id": output["id"]}),
+        )).unwrap();
+        assert_eq!(saved["instrument"], output["instrument"]);
+        assert_eq!(saved["stats"]["final_cash"], output["stats"]["final_cash"]);
         std::fs::remove_dir_all(&dir).unwrap();
         unsafe { std::env::remove_var("QUANTRIG_DATA") };
     }

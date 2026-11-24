@@ -43,12 +43,13 @@ const money = new Intl.NumberFormat(undefined, {
   currency: "USD",
   maximumFractionDigits: 2,
 });
+const amount = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 
-export function formatValue(key: string, v: number): string {
+export function formatValue(key: string, v: number, currency: "USD" | null): string {
   if (!Number.isFinite(v)) return "—";
   switch (SPECS[key]?.kind) {
     case "money":
-      return money.format(v);
+      return (currency === "USD" ? money : amount).format(v);
     case "pct":
       return `${v.toFixed(2)}%`;
     case "count":

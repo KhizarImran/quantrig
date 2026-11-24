@@ -51,7 +51,7 @@ function Sign({ polarity }: { polarity: "good" | "bad" | null }) {
 const tone = (p: "good" | "bad" | null) =>
   p === "good" ? "text-emerald-600 dark:text-emerald-500" : p === "bad" ? "text-destructive" : "";
 
-function Summary({ result }: { result: RunResult }) {
+function Summary({ result, currency }: { result: RunResult; currency: "USD" | null }) {
   const heroPolarity = polarityOf(HERO, result.stats[HERO]);
   return (
     <div className="p-6">
@@ -59,7 +59,7 @@ function Summary({ result }: { result: RunResult }) {
         <div className="text-xs text-muted-foreground">{SPECS[HERO].label}</div>
         <div className={`text-5xl font-semibold tracking-tight ${tone(heroPolarity)}`}>
           <Sign polarity={heroPolarity} />
-          {formatValue(HERO, result.stats[HERO])}
+          {formatValue(HERO, result.stats[HERO], currency)}
         </div>
       </div>
       <div className="grid grid-cols-2 overflow-hidden rounded-lg border bg-border gap-px sm:grid-cols-3">
@@ -70,7 +70,7 @@ function Summary({ result }: { result: RunResult }) {
               <div className="text-xs text-muted-foreground">{SPECS[k]?.label ?? k}</div>
               <div className={`text-lg font-semibold ${tone(polarity)}`}>
                 <Sign polarity={polarity} />
-                {formatValue(k, result.stats[k])}
+                {formatValue(k, result.stats[k], currency)}
               </div>
             </div>
           );
@@ -107,7 +107,10 @@ export function Backtest({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const selected = dataset || datasets[0]?.name || "";
+  const firstSupported = datasets.find((d) => d.backtest_instrument);
+  const selected = dataset || firstSupported?.name || "";
+  const selectedDataset = datasets.find((d) => d.name === selected);
+  const canRun = Boolean(selectedDataset?.backtest_instrument);
 
   useEffect(() => {
     api.strategies().then(setStrategies).catch(() => setStrategies([]));
@@ -163,6 +166,7 @@ export function Backtest({
     setError(null);
     setCode(EXAMPLE);
     setStrategy("");
+    setDataset("");
     setRunLabel("SMA crossover");
     setCash("10000");
     setSpread("0.0001");
@@ -190,6 +194,7 @@ export function Backtest({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canRun || busy || opening) return;
     setBusy(true);
     setError(null);
     try {
@@ -261,7 +266,14 @@ export function Backtest({
 
         <Card>
           <CardContent className="flex flex-wrap items-end gap-3">
-            {datasets.length === 0 && <Alert><AlertDescription>Download candles to run a backtest. Saved reports are still available.<Button type="button" size="sm" variant="outline" onClick={onNeedData}>Go to Data</Button></AlertDescription></Alert>}
+            {!firstSupported && <Alert><AlertDescription>Download a supported FX dataset, such as EUR/USD, to run a backtest.<Button type="button" size="sm" variant="outline" onClick={onNeedData}>Go to Data</Button></AlertDescription></Alert>}
+            {firstSupported && selected && !canRun && (
+              <Alert><AlertDescription>
+                {selectedDataset
+                  ? "This dataset needs verified contract sizing or currency conversion. Choose a supported dataset to run again."
+                  : "The saved dataset is unavailable. Choose a dataset to run again."}
+              </AlertDescription></Alert>
+            )}
             <div className="min-w-48 flex-[2] space-y-2">
               <Label>Dataset</Label>
               <Select value={selected} onValueChange={(v) => v && setDataset(v)}>
@@ -270,15 +282,15 @@ export function Backtest({
                 </SelectTrigger>
                 <SelectContent>
                   {datasets.map((d) => (
-                    <SelectItem key={d.name} value={d.name} className="font-mono">
-                      {d.name}
+                    <SelectItem key={d.name} value={d.name} disabled={!d.backtest_instrument} className="font-mono">
+                      {d.name}{!d.backtest_instrument && " (unsupported)"}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="min-w-24 flex-1 space-y-2">
-              <Label htmlFor="cash">Cash</Label>
+              <Label htmlFor="cash">Cash (USD)</Label>
               <Input id="cash" value={cash} onChange={(e) => setCash(e.target.value)} className="font-mono" />
             </div>
             <div className="min-w-24 flex-1 space-y-2">
@@ -294,7 +306,7 @@ export function Backtest({
                 className="font-mono"
               />
             </div>
-            <Button type="submit" disabled={busy || opening || !datasets.some((d) => d.name === selected)}>
+            <Button type="submit" disabled={busy || opening || !canRun}>
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
               Run backtest
             </Button>
@@ -306,6 +318,12 @@ export function Backtest({
         {result && <div className="border-b px-4 py-3 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">{result.project} / {result.strategy}</p>
           <p className="mt-1">{result.dataset || "Archived report"} · {new Date(result.created).toLocaleString()} · {result.source === "agent" ? "Chat run" : "Saved run"}</p>
+          <p className="mt-1">{result.instrument ? (
+            <>
+              {result.instrument.contract_size.toLocaleString()} {result.instrument.base_currency} per lot ·{" "}
+              {result.instrument.account_currency} account · Quote conversion {result.instrument.quote_to_account}
+            </>
+          ) : "Contract sizing and currency conversion were not recorded for this run."}</p>
           <p className="mt-1">Running again creates a new entry.</p>
         </div>}
         {busy && <div className="h-0.5 w-full animate-pulse bg-primary" />}
@@ -334,7 +352,7 @@ export function Backtest({
 
         {result && !error && (
           <>
-            {result.stats ? <Summary result={{ id: result.id, stats: result.stats }} /> : <p className="p-4 text-xs text-muted-foreground">This older run saved only its source and report. Original settings and summary stats are unavailable.</p>}
+            {result.stats ? <Summary result={{ id: result.id, stats: result.stats }} currency={result.instrument?.account_currency ?? null} /> : <p className="p-4 text-xs text-muted-foreground">This older run saved only its source and report. Original settings and summary stats are unavailable.</p>}
             {result.report_available && <iframe
               src={`/report/${result.id}`}
               title="Backtest report"
