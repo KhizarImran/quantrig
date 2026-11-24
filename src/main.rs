@@ -111,6 +111,7 @@ async fn list_datasets() -> Json<Value> {
                 "rows": meta.get("rows").cloned().unwrap_or(Value::Null),
                 "start": meta.get("start").cloned().unwrap_or(Value::Null),
                 "end": meta.get("end").cloned().unwrap_or(Value::Null),
+                "backtest_instrument": backtests::instrument_for(&name).ok(),
             }));
         }
     }

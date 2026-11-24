@@ -392,11 +392,11 @@ All routes are defined in [`src/main.rs`](src/main.rs). Errors are returned as
 | `GET` | `/api/settings` | Which keys are set (`lse_api_key_set`, `opencode_api_key_set`). Never the keys. |
 | `PUT` | `/api/settings` | Set `lse_api_key` and/or `opencode_api_key`. |
 | `GET` | `/api/pairs` | FX, commodity and index catalogue, cached on disk. `?refresh=true` fetches it again. |
-| `GET` | `/api/datasets` | Downloaded datasets with row count and span. |
+| `GET` | `/api/datasets` | Downloaded datasets with row count and span. `backtest_instrument` describes the verified terms or is `null` for unsupported datasets. |
 | `POST` | `/api/datasets` | Download candles: `{symbol, timeframe, start?, end?}`. |
 | `POST` | `/api/run` | Backtest `{code, dataset, cash, spread, commission, project?, strategy?}` and return the saved run. Execution failures remain in history. Returns `429` when a backtest is already running. |
 | `GET` | `/api/runs` | Backtest summaries, newest first, including project, strategy, dataset and status. |
-| `GET` | `/api/runs/{id}` | Full saved run: source, settings, stats/error and report availability. |
+| `GET` | `/api/runs/{id}` | Full saved run with source, settings, instrument terms, results and report availability. Older runs may have `instrument: null`. |
 | `PUT` | `/api/runs/{id}` | Move a saved run to `{project}`. |
 | `DELETE` | `/api/runs/{id}` | Delete one run's metadata and artifacts. Returns `{deleted, failed}`. |
 | `DELETE` | `/api/runs` | Delete the explicitly confirmed `{ids: [...]}`. Returns `{deleted, failed}`; new runs outside that snapshot are kept. |
@@ -469,9 +469,11 @@ These items are **planned in [DECISIONS.md](DECISIONS.md) and not built yet.**
 - **One backtest at a time.** Runs are synchronous and share one slot across the app.
 - **Stats are scalars only.** Equity curves and trade lists are in the HTML report, not in the
   API response.
-- **Contract sizing is FX-only in backtests.** The runner currently uses the engine's
-  100,000-unit contract default. Gold and index candles can be downloaded, but meaningful
-  backtests require instrument-specific contract sizing, which is not exposed yet.
+- **Supported backtests use USD accounts.** AUD/USD, EUR/USD, GBP/USD, and NZD/USD use
+  100,000 base-currency units per lot with a quote-to-account rate of 1. Other instruments
+  remain available for download and require verified sizing or conversion before they can run.
+  Saved runs retain the terms used. Older results stay accessible and show when those terms
+  were never recorded.
 - **Linux containers only**, because the sandbox relies on bubblewrap and user namespaces.
 
 ## Editing the diagram

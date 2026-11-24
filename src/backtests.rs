@@ -27,6 +27,47 @@ pub struct Config {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+enum Currency {
+    Aud,
+    Eur,
+    Gbp,
+    Nzd,
+    Usd,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Instrument {
+    base_currency: Currency,
+    quote_currency: Currency,
+    account_currency: Currency,
+    contract_size: u32,
+    quote_to_account: f64,
+}
+
+pub fn instrument_for(dataset: &str) -> std::result::Result<Instrument, &'static str> {
+    let unsupported = "unsupported backtest instrument. Use AUD/USD, EUR/USD, GBP/USD, or NZD/USD. Other instruments need verified contract sizing or currency conversion.";
+    let (symbol, _) = dataset
+        .rsplit_once('@')
+        .filter(|(_, timeframe)| !timeframe.is_empty())
+        .ok_or(unsupported)?;
+    let base_currency = match symbol {
+        "AUD_USD" => Currency::Aud,
+        "EUR_USD" => Currency::Eur,
+        "GBP_USD" => Currency::Gbp,
+        "NZD_USD" => Currency::Nzd,
+        _ => return Err(unsupported),
+    };
+    Ok(Instrument {
+        base_currency,
+        quote_currency: Currency::Usd,
+        account_currency: Currency::Usd,
+        contract_size: 100_000,
+        quote_to_account: 1.0,
+    })
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
     pub project: String,
@@ -36,6 +77,8 @@ pub struct Run {
     pub source: String,
     pub code: String,
     pub config: Option<Config>,
+    #[serde(default)]
+    pub instrument: Option<Instrument>,
     pub stats: Option<Value>,
     pub error: Option<String>,
     pub report_available: bool,
@@ -80,7 +123,7 @@ pub fn load(id: &str) -> Result<Run> {
         id: id.into(), project: "Ungrouped".into(), strategy: "Archived strategy".into(),
         dataset: String::new(), created: id.parse::<u128>().unwrap_or(0).checked_div(1_000_000).unwrap_or(0) as u64,
         source: "legacy".into(), code: std::fs::read_to_string(dir.join("strategy.py"))?,
-        config: None, stats: None, error: None, report_available: true,
+        config: None, instrument: None, stats: None, error: None, report_available: true,
     })
 }
 
@@ -152,6 +195,7 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
         return Err("cash must be positive; spread and commission must be non-negative finite numbers".into());
     }
     let candles = store::dataset_path(&dataset).filter(|p| p.is_file()).ok_or("unknown dataset — download it first")?;
+    let instrument = instrument_for(&dataset)?;
     let _slot = match RUN_SLOT.try_lock() {
         Ok(slot) => slot,
         Err(TryLockError::Poisoned(error)) => error.into_inner(),
@@ -169,7 +213,14 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
     };
     let strategy_path = dir.join("strategy.py");
     std::fs::write(&strategy_path, &code)?;
-    let runner_config = json!({"cash": config.cash, "spread": config.spread, "commission": config.commission, "plot": true});
+    let runner_config = json!({
+        "cash": config.cash,
+        "spread": config.spread,
+        "commission": config.commission,
+        "contract_size": instrument.contract_size,
+        "quote_to_account": instrument.quote_to_account,
+        "plot": true,
+    });
     let outcome = sandbox::run_backtest(&strategy_path, &candles, &dir, &runner_config.to_string())
         .and_then(|raw| Ok(serde_json::from_str::<Value>(&raw)?));
     let (stats, error) = match outcome { Ok(stats) => (Some(stats), None), Err(e) => (None, Some(e.to_string())) };
@@ -177,7 +228,7 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
     let run = Run {
         created: id.parse::<u128>()?.checked_div(1_000_000).unwrap_or(0) as u64,
         id, project, strategy: if strategy.trim().is_empty() { "Untitled strategy".into() } else { strategy },
-        dataset, source: source.into(), code, config: Some(config), stats, error,
+        dataset, source: source.into(), code, config: Some(config), instrument: Some(instrument), stats, error,
         report_available,
     };
     save(&run)?;
@@ -187,6 +238,23 @@ pub fn execute(code: String, strategy: String, dataset: String, project: String,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_verified_usd_quoted_fx_pairs_get_instrument_terms() {
+        for base in ["AUD", "EUR", "GBP", "NZD"] {
+            let instrument = instrument_for(&format!("{base}_USD@1h")).unwrap();
+            assert_eq!(
+                serde_json::to_value(instrument).unwrap(),
+                json!({
+                    "base_currency": base, "quote_currency": "USD", "account_currency": "USD",
+                    "contract_size": 100_000, "quote_to_account": 1.0,
+                }),
+            );
+        }
+        for dataset in ["USD_JPY@1h", "XAU_USD@1h", "BTC_USD@1h", "US30@1h", "EUR_USD@", "EUR_USD@1h@5m"] {
+            assert!(instrument_for(dataset).is_err(), "{dataset}");
+        }
+    }
 
     #[test]
     fn history_preserves_variants_settings_failures_and_legacy_reports() {
@@ -200,7 +268,7 @@ mod tests {
             id: "1000000".into(), project: "Martingale".into(), strategy: "Martingale v1".into(),
             dataset: "EUR_USD@1h".into(), created: 1, source: "agent".into(),
             code: "# original source".into(), config: Some(Config { cash: 5000.0, spread: 0.001, commission: 0.1 }),
-            stats: Some(json!({"total_return_pct": 12.5})), error: None, report_available: true,
+            instrument: None, stats: Some(json!({"total_return_pct": 12.5})), error: None, report_available: true,
         };
         save(&original).unwrap();
         let mut variant = original.clone();

@@ -219,7 +219,8 @@ pd.DataFrame({"open": close, "high": close + 0.0005, "low": close - 0.0005,
     fn run(dir: &Path, name: &str, body: &str) -> Result<String, Box<dyn Error>> {
         let path = dir.join(name);
         fs::write(&path, body).unwrap();
-        run_backtest(&path, &dir.join("candles.parquet"), &dir.join("out"), "{}")
+        let config = r#"{"contract_size":100000,"quote_to_account":1.0}"#;
+        run_backtest(&path, &dir.join("candles.parquet"), &dir.join("out"), config)
     }
 
     #[test]
