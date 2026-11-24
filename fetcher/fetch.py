@@ -5,6 +5,7 @@ credential and never sees strategy code. Invoked by the API, never by a strategy
 
     fetch.py catalog <out.json>
     fetch.py download <symbol> <timeframe> <start> <end> <out.parquet>
+    fetch.py inspect <candles.parquet>
     fetch.py selftest
 """
 import http.client
@@ -137,12 +138,23 @@ def download(client: LSE, symbol: str, timeframe: str, start: str, end: str, out
     if not rows:
         raise SystemExit(f"{symbol} {timeframe} returned no candles for that range")
     df = normalise(pd.DataFrame(rows))
+    metadata = summary(df.index)
     df.to_parquet(out)
-    print(json.dumps({
-        "rows": len(df),
-        "start": df.index[0].isoformat(),
-        "end": df.index[-1].isoformat(),
-    }))
+    print(json.dumps(metadata))
+
+
+def summary(index: pd.DatetimeIndex) -> dict:
+    if not isinstance(index, pd.DatetimeIndex) or index.empty or index.hasnans:
+        raise SystemExit("candles need a non-empty timestamp index")
+    return {
+        "rows": len(index),
+        "start": index.min().isoformat(),
+        "end": index.max().isoformat(),
+    }
+
+
+def inspect(path: str) -> None:
+    print(json.dumps(summary(pd.read_parquet(path, columns=[]).index)))
 
 
 def selftest() -> None:
@@ -216,6 +228,8 @@ def main() -> None:
     cmd = sys.argv[1]
     if cmd == "selftest":
         return selftest()
+    if cmd == "inspect":
+        return inspect(sys.argv[2])
 
     client = LSE(api_key=os.environ["LSE_API_KEY"], timeout=REST_TIMEOUT)
     if cmd == "catalog":

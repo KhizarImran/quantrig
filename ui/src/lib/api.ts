@@ -16,10 +16,13 @@ export type SavedRun = Omit<RunSummary, "status" | "return_pct"> & {
   code: string;
   config: { cash: number; spread: number; commission: number } | null;
   instrument: BacktestInstrument | null;
+  candle_revision: CandleRevision | null;
   stats: Stats | null;
   error: string | null;
   report_available: boolean;
 };
+type CandleSpan = { rows: number; start: string; end: string };
+type CandleRevision = CandleSpan & { id: string };
 type BacktestInstrument = {
   base_currency: "AUD" | "EUR" | "GBP" | "NZD";
   quote_currency: "USD";
@@ -34,6 +37,7 @@ export type Dataset = {
   rows: number | null;
   start: string | null;
   end: string | null;
+  revision: string | null;
   backtest_instrument: BacktestInstrument | null;
 };
 
@@ -164,13 +168,14 @@ export const api = {
     method: "PUT", body: JSON.stringify({ project }),
   }),
   download: (v: { symbol: string; timeframe: string; start: string; end: string }) =>
-    call<{ name: string; summary: { rows: number; start: string; end: string } }>(
+    call<{ name: string; revision: string; summary: CandleSpan }>(
       "/api/datasets",
       body(v),
     ),
   run: (v: {
     code: string;
     dataset: string;
+    rerun_of?: string;
     cash: number;
     spread: number;
     commission: number;
